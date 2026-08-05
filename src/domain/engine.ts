@@ -8,12 +8,10 @@ const SKIP = new Set(["saltar", "no sé", "no se", "no tengo", "no aplica", "n/a
 const PASSPORT_MANUAL_REVIEW_FIELDS = [
   "identity.last_names",
   "identity.first_names",
-  "identity.sex",
   "identity.birth_date",
   "identity.birth_city",
   "identity.birth_country",
   "identity.citizenship",
-  "passport.number",
   "passport.issuing_country",
   "passport.issue_date",
   "passport.expiry_date",
@@ -203,7 +201,6 @@ export function handlePassportDocument(
   documentId: string,
   proposals: Array<{ fieldId: string; value: string | number | boolean; confidence: number }>,
 ): EngineResult {
-  setAnswer(caseRecord, "workflow.passport_available", true, "CONFIRMED", "CHAT", 100);
   setAnswer(caseRecord, "workflow.passport_uploaded", documentId, "CONFIRMED", "DOCUMENT", 100);
   // Phase one deliberately has no OCR/AI. These values are visible as pending in
   // the staff panel, and are skipped in the chat so the client is not asked to

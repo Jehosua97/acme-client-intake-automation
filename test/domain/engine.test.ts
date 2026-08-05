@@ -30,12 +30,12 @@ describe("conversation engine", () => {
     const accepted = handleClientText(caseRecord, "ACEPTO");
     assert.equal(accepted.caseRecord.status, "ACTIVE");
     assert.equal(accepted.caseRecord.answers["contact.phone"]?.value, "+5215550000000");
-    assert.equal(accepted.caseRecord.currentFieldId, "workflow.passport_available");
+    assert.equal(accepted.caseRecord.currentFieldId, "workflow.passport_uploaded");
   });
 
   it("does not immediately repeat a skipped question", () => {
     const caseRecord = consentedCase();
-    handleClientText(caseRecord, "No");
+    handleClientText(caseRecord, "SALTAR"); // pasaporte pendiente
     handleClientText(caseRecord, "SALTAR"); // UCI opcional
     handleClientText(caseRecord, "Visa de visitante");
     assert.equal(caseRecord.currentFieldId, "identity.last_names");
@@ -50,7 +50,6 @@ describe("conversation engine", () => {
     const result = handlePassportDocument(caseRecord, "media-1", [
       { fieldId: "identity.last_names", value: "Pérez López", confidence: 99 },
       { fieldId: "identity.first_names", value: "Ana María", confidence: 98 },
-      { fieldId: "passport.number", value: "G12345678", confidence: 97 },
     ]);
     assert.equal(caseRecord.currentFieldId, "__proposal_batch__");
     const body = result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "";
@@ -59,7 +58,6 @@ describe("conversation engine", () => {
 
     handleClientText(caseRecord, "Sí");
     assert.equal(caseRecord.answers["identity.last_names"]?.status, "CONFIRMED");
-    assert.equal(caseRecord.answers["passport.number"]?.status, "CONFIRMED");
     assert.notEqual(caseRecord.currentFieldId, "identity.last_names");
   });
 
@@ -68,9 +66,7 @@ describe("conversation engine", () => {
     const result = handlePassportDocument(caseRecord, "drive-file-1", []);
     assert.equal(caseRecord.answers["identity.last_names"]?.status, "PENDING");
     assert.equal(caseRecord.answers["identity.last_names"]?.source, "DOCUMENT");
-    assert.equal(caseRecord.answers["passport.number"]?.status, "PENDING");
     assert.notEqual(caseRecord.currentFieldId, "identity.last_names");
-    assert.notEqual(caseRecord.currentFieldId, "passport.number");
     assert.ok(result.outgoing.length > 0);
   });
 
@@ -121,13 +117,14 @@ describe("conversation engine", () => {
     assert.equal(resumed.caseRecord.currentFieldId, field);
   });
 
-  it("does not count optional workflow fields in completion", () => {
+  it("counts a skipped passport as a required pending item", () => {
     const caseRecord = consentedCase();
     const initial = calculateProgress(caseRecord);
-    handleClientText(caseRecord, "No");
-    const afterPassportChoice = calculateProgress(caseRecord);
-    assert.equal(afterPassportChoice.required, initial.required);
-    assert.equal(afterPassportChoice.confirmed, initial.confirmed);
+    handleClientText(caseRecord, "SALTAR");
+    const afterPassportSkip = calculateProgress(caseRecord);
+    assert.equal(afterPassportSkip.required, initial.required);
+    assert.equal(afterPassportSkip.confirmed, initial.confirmed);
+    assert.equal(afterPassportSkip.pending, initial.pending + 1);
   });
 
   it("records a deletion request without deleting immediately", () => {
@@ -170,7 +167,20 @@ describe("conversation engine", () => {
         value = current.id === "employment.count" ? "1" : "0";
       } else if (current.kind === "email") value = "cliente@example.com";
       else if (current.kind === "money") value = "5000";
-      if (current.id === "workflow.passport_uploaded") value = "SALTAR";
+      if (current.id === "workflow.passport_uploaded") {
+        handlePassportDocument(caseRecord, "drive-file-1", [
+          { fieldId: "identity.last_names", value: "Pérez", confidence: 100 },
+          { fieldId: "identity.first_names", value: "Ana", confidence: 100 },
+          { fieldId: "identity.birth_date", value: "1990-01-01", confidence: 100 },
+          { fieldId: "identity.birth_city", value: "Ciudad", confidence: 100 },
+          { fieldId: "identity.birth_country", value: "México", confidence: 100 },
+          { fieldId: "identity.citizenship", value: "Mexicana", confidence: 100 },
+          { fieldId: "passport.issuing_country", value: "México", confidence: 100 },
+          { fieldId: "passport.issue_date", value: "2024-01-01", confidence: 100 },
+          { fieldId: "passport.expiry_date", value: "2034-01-01", confidence: 100 },
+        ]);
+        continue;
+      }
       handleClientText(caseRecord, value);
     }
     assert.equal(caseRecord.status, "READY_FOR_REVIEW");

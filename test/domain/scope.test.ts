@@ -9,3 +9,18 @@ it("excludes health, criminal, military, organization and government questions f
   }
 });
 
+it("excludes the questions removed from the client conversation", () => {
+  const ids = new Set(catalogFor({}).map((field) => field.id));
+  for (const excluded of [
+    "workflow.passport_available",
+    "identity.native_name",
+    "identity.used_other_name",
+    "identity.previous_name",
+    "identity.sex",
+    "passport.number",
+    "passport.taiwan_personal_id",
+    "passport.israeli_national",
+  ]) {
+    assert.equal(ids.has(excluded), false, `unexpected client question: ${excluded}`);
+  }
+});

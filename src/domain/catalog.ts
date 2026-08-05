@@ -25,27 +25,19 @@ const field = (
 });
 
 const core: FieldDefinition[] = [
-  field("workflow.passport_available", "Inicio", "Pasaporte disponible", "Para ahorrar preguntas, ¿tienes ahora una foto clara de la página de datos de tu pasaporte? Sí o No.", "yes_no", { required: false, forms: ["INTERNAL"] }),
-  field("workflow.passport_uploaded", "Inicio", "Pasaporte recibido", "Envíame la foto del pasaporte como imagen. Si prefieres hacerlo después, escribe SALTAR.", "text", { required: false, applies: isYes("workflow.passport_available"), forms: ["INTERNAL"] }),
+  field("workflow.passport_uploaded", "Inicio", "Pasaporte recibido", "Para comenzar, envíame una foto clara o un PDF de la página de datos de tu pasaporte. Si no lo tienes en este momento, escribe SALTAR y quedará pendiente.", "text", { forms: ["INTERNAL"] }),
   field("application.uci", "Inicio", "UCI", "Si alguna vez tuviste un número UCI de Canadá, escríbelo. Si no lo tienes o no lo conoces, escribe SALTAR.", "text", { required: false }),
-  field("application.visa_type", "Inicio", "Tipo de visa", "¿Solicitarás visa de visitante o visa de tránsito?"),
+  field("application.visa_type", "Inicio", "Tipo de visa", "¿El trámite es para una visa de visitante (turista) o una visa de tránsito?"),
   field("identity.last_names", "Datos personales", "Apellidos", "¿Cuáles son tus apellidos completos tal como aparecen en tu pasaporte?", "text", { forms: ["IMM5257", "IMM5707"] }),
   field("identity.first_names", "Datos personales", "Nombres", "¿Cuáles son todos tus nombres tal como aparecen en tu pasaporte?", "text", { forms: ["IMM5257", "IMM5707"] }),
-  field("identity.native_name", "Datos personales", "Nombre en escritura nativa", "Si tu nombre también se escribe con otro alfabeto, escríbelo aquí. Si no aplica, escribe SALTAR.", "text", { required: false, forms: ["IMM5707"] }),
-  field("identity.used_other_name", "Datos personales", "Uso de otro nombre", "¿Alguna vez has usado legalmente otro nombre o apellido? Responde Sí o No.", "yes_no"),
-  field("identity.previous_name", "Datos personales", "Nombre anterior", "¿Cuál era ese nombre completo?", "text", { applies: isYes("identity.used_other_name") }),
-  field("identity.sex", "Datos personales", "Sexo en pasaporte", "¿Cuál es tu sexo tal como aparece en tu pasaporte?"),
   field("identity.birth_date", "Datos personales", "Fecha de nacimiento", "¿Cuál es tu fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5257", "IMM5707"] }),
   field("identity.birth_city", "Datos personales", "Ciudad de nacimiento", "¿En qué ciudad o pueblo naciste?"),
   field("identity.birth_country", "Datos personales", "País de nacimiento", "¿En qué país o territorio naciste?", "text", { forms: ["IMM5257", "IMM5707"] }),
   field("identity.citizenship", "Datos personales", "Ciudadanía", "¿Cuál es tu ciudadanía actual?"),
 
-  field("passport.number", "Pasaporte", "Número de pasaporte", "¿Cuál es tu número de pasaporte?"),
   field("passport.issuing_country", "Pasaporte", "País emisor", "¿Qué país o territorio emitió tu pasaporte?"),
   field("passport.issue_date", "Pasaporte", "Fecha de emisión", "¿Cuál es la fecha de emisión de tu pasaporte? Usa DD/MM/AAAA.", "date"),
   field("passport.expiry_date", "Pasaporte", "Fecha de vencimiento", "¿Cuál es la fecha de vencimiento de tu pasaporte? Usa DD/MM/AAAA.", "date"),
-  field("passport.taiwan_personal_id", "Pasaporte", "Identificación personal de Taiwán", "¿Es un pasaporte de Taiwán que contiene número de identificación personal? Responde Sí o No; si no aplica, escribe SALTAR.", "yes_no", { required: false }),
-  field("passport.israeli_national", "Pasaporte", "Pasaporte nacional israelí", "¿Es un pasaporte nacional israelí? Responde Sí o No; si no aplica, escribe SALTAR.", "yes_no", { required: false }),
 
   field("residence.current_country", "Residencia", "País de residencia", "¿En qué país vives actualmente?"),
   field("residence.current_status", "Residencia", "Estatus actual", "¿Qué estatus tienes ahí? Por ejemplo: ciudadanía, residencia permanente, trabajo, estudios o visita."),
