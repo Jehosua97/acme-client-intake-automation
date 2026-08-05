@@ -49,6 +49,8 @@ describe("conversation engine", () => {
       "residence.applying_from_current": true,
       "contact.mailing_country": "México",
       "contact.residential_country": "México",
+      "language.mother_tongue": "Español",
+      "language.preferred": "Inglés",
     };
     for (const [fieldId, value] of Object.entries(expected)) {
       assert.equal(caseRecord.answers[fieldId]?.value, value);

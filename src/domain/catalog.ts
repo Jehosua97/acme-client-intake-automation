@@ -91,10 +91,8 @@ const core: FieldDefinition[] = [
   field("contact.phone", "Contacto", "Teléfono principal", "¿Cuál es tu teléfono principal con código de país?", "phone"),
   field("contact.phone_type", "Contacto", "Tipo de teléfono", "¿Ese teléfono es celular, casa o trabajo?"),
 
-  field("language.mother_tongue", "Idiomas", "Lengua materna", "¿Cuál es tu lengua materna?"),
   field("language.english", "Idiomas", "Inglés", "¿Puedes comunicarte en inglés? Sí o No.", "yes_no"),
   field("language.french", "Idiomas", "Francés", "¿Puedes comunicarte en francés? Sí o No.", "yes_no"),
-  field("language.preferred", "Idiomas", "Idioma preferido", "¿En qué idioma te sientes más cómodo/a para recibir atención?"),
   field("language.official_test", "Idiomas", "Examen oficial", "¿Has tomado un examen oficial de inglés o francés? Sí o No.", "yes_no"),
 
   field("education.has_postsecondary", "Educación", "Estudios postsecundarios", "¿Cursaste estudios después de preparatoria o bachillerato? Sí o No.", "yes_no"),
