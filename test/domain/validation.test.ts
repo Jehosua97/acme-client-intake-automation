@@ -17,11 +17,16 @@ describe("answer validation", () => {
   });
 
   it("recognizes common and misspelled ways to say that a relative died", () => {
-    const deceased = field("text", "parent1.marital_status");
+    const deceased = field("text", "mother.marital_status");
     for (const value of ["FINADO", "finada", "Falleció", "ya fallecido", "Muerta", "fayecido", "FAYECIDA", "difunto"]) {
       assert.deepEqual(validateAnswer(deceased, value), { ok: true, value: "FALLECIDO/A" }, value);
     }
     assert.deepEqual(validateAnswer(deceased, "Casado"), { ok: true, value: "Casado" });
+  });
+
+  it("records unknown mother or father names as a known condition", () => {
+    assert.deepEqual(validateAnswer(field("text", "mother.full_name"), "NO SÉ"), { ok: true, value: "DESCONOCIDA" });
+    assert.deepEqual(validateAnswer(field("text", "father.full_name"), "No lo conozco"), { ok: true, value: "DESCONOCIDO" });
   });
 
   it("accepts current employment and validates month", () => {

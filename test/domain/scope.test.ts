@@ -24,6 +24,8 @@ it("excludes the questions removed from the client conversation", () => {
     "residence.status_until",
     "parent1.deceased",
     "parent2.deceased",
+    "parent1.full_name",
+    "parent2.full_name",
     "contact.mailing_unit",
     "contact.mailing_street_number",
     "contact.mailing_street_name",
@@ -54,7 +56,7 @@ it("does not ask a separate deceased question for parents or children", () => {
 it("uses one complete-name field instead of separate first and last names", () => {
   const ids = catalogFor({}).map((field) => field.id);
   assert.equal(ids.some((id) => id.endsWith(".first_names") || id.endsWith(".last_names")), false);
-  for (const required of ["identity.full_name", "parent1.full_name", "parent2.full_name"]) {
+  for (const required of ["identity.full_name", "mother.full_name", "father.full_name"]) {
     assert.equal(ids.includes(required), true, `missing complete-name field: ${required}`);
   }
 });

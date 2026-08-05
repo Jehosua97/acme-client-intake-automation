@@ -7,8 +7,8 @@ export const APPLICANT_ADDRESS_FIELD_ID = "contact.residential_address";
 const fixedAlternateAddressIds = new Set([
   "contact.mailing_address",
   "partner.address",
-  "parent1.address",
-  "parent2.address",
+  "mother.address",
+  "father.address",
   "visit.contact_address",
 ]);
 

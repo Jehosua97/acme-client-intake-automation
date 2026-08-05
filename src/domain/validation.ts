@@ -1,11 +1,12 @@
 import type { FieldDefinition } from "./types.js";
+import { unknownParentValue } from "./family.js";
 
 export type ValidationResult = { ok: true; value: string | number | boolean } | { ok: false; message: string };
 
 const clean = (value: string) => value.trim().replace(/\s+/g, " ");
 const normalize = (value: string) => value.toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 const deceasedPattern = /\b(finad[oa]|fallecio|fallecid[oa]|fayecid[oa]|muert[oa]|difunt[oa])\b/;
-const relativeMaritalStatusPattern = /^(?:parent[12]|children\.\d+)\.marital_status$/;
+const relativeMaritalStatusPattern = /^(?:mother|father|children\.\d+)\.marital_status$/;
 
 function isoDate(value: string): string | null {
   const match = clean(value).match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
@@ -31,6 +32,8 @@ function yearMonth(value: string): string | null {
 export function validateAnswer(field: FieldDefinition, raw: string): ValidationResult {
   const value = clean(raw);
   if (!value) return { ok: false, message: "No alcancé a leer una respuesta. Inténtalo otra vez." };
+  const unknownParent = unknownParentValue(field.id, value);
+  if (unknownParent) return { ok: true, value: unknownParent };
   const normalized = normalize(value);
   if (relativeMaritalStatusPattern.test(field.id) && deceasedPattern.test(normalized)) {
     return { ok: true, value: "FALLECIDO/A" };

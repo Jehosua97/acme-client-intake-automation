@@ -34,7 +34,7 @@ describe("conversation engine", () => {
     const overview = accepted.outgoing[0]?.type === "text" ? accepted.outgoing[0].body : "";
     assert.match(overview, /30 y 45 minutos/);
     assert.match(overview, /5 bloques/);
-    assert.match(overview, /Familia: 18 preguntas base/);
+    assert.match(overview, /Familia: hasta 18 preguntas base/);
     assert.match(overview, /ALTO, PAUSA, DETENTE o PARA/);
     assert.match(overview, /distintos días/);
   });
@@ -115,16 +115,39 @@ describe("conversation engine", () => {
 
   it("infers deceased relatives from marital status and skips their remaining details", () => {
     const caseRecord = consentedCase();
-    caseRecord.answers["parent1.marital_status"] = confirmed("parent1.marital_status", "FALLECIDO/A");
+    caseRecord.answers["mother.full_name"] = confirmed("mother.full_name", "María López");
+    caseRecord.answers["mother.marital_status"] = confirmed("mother.marital_status", "FALLECIDO/A");
     caseRecord.answers["children.count"] = confirmed("children.count", 1);
     caseRecord.answers["children.1.marital_status"] = confirmed("children.1.marital_status", "FALLECIDO/A");
     const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
-    for (const prefix of ["parent1", "children.1"]) {
+    for (const prefix of ["mother", "children.1"]) {
       assert.equal(ids.has(`${prefix}.full_name`), true);
       assert.equal(ids.has(`${prefix}.birth_date`), true);
       assert.equal(ids.has(`${prefix}.marital_status`), true);
       for (const suffix of ["address", "occupation", "accompanies"]) {
         assert.equal(ids.has(`${prefix}.${suffix}`), false, `${prefix}.${suffix}`);
+      }
+    }
+  });
+
+  it("asks for the mother first and skips all remaining details when a parent is unknown", () => {
+    const caseRecord = consentedCase();
+    let ids = catalogFor(caseRecord.answers).map((field) => field.id);
+    assert.ok(ids.indexOf("mother.full_name") < ids.indexOf("father.full_name"));
+    assert.equal(ids.includes("mother.birth_date"), false);
+    assert.equal(ids.includes("father.birth_date"), false);
+
+    caseRecord.currentFieldId = "mother.full_name";
+    handleClientText(caseRecord, "NO SÉ");
+    caseRecord.currentFieldId = "father.full_name";
+    handleClientText(caseRecord, "No lo conozco");
+    assert.equal(caseRecord.answers["mother.full_name"]?.value, "DESCONOCIDA");
+    assert.equal(caseRecord.answers["father.full_name"]?.value, "DESCONOCIDO");
+
+    ids = catalogFor(caseRecord.answers).map((field) => field.id);
+    for (const prefix of ["mother", "father"]) {
+      for (const suffix of ["birth_date", "birth_country", "marital_status", "address", "occupation", "accompanies"]) {
+        assert.equal(ids.includes(`${prefix}.${suffix}`), false, `${prefix}.${suffix}`);
       }
     }
   });
@@ -143,6 +166,8 @@ describe("conversation engine", () => {
     const applicantAddress = "Calle Principal 10, Colonia Centro, Municipio de Veracruz, Veracruz, C.P. 91700";
     caseRecord.answers["contact.residential_address"] = confirmed("contact.residential_address", applicantAddress);
     caseRecord.answers["family.has_partner"] = confirmed("family.has_partner", true);
+    caseRecord.answers["mother.full_name"] = confirmed("mother.full_name", "María López");
+    caseRecord.answers["father.full_name"] = confirmed("father.full_name", "Juan Pérez");
     caseRecord.answers["children.count"] = confirmed("children.count", 1);
     caseRecord.answers["children.1.marital_status"] = confirmed("children.1.marital_status", "Soltero/a");
     const fields = catalogFor(caseRecord.answers);
@@ -150,7 +175,7 @@ describe("conversation engine", () => {
     assert.ok(ids.indexOf("contact.residential_address") < ids.indexOf("contact.mailing_address"));
     assert.ok(ids.indexOf("contact.mailing_address") < ids.indexOf("partner.address"));
     assert.match(fields.find((field) => field.id === "contact.residential_address")?.prompt ?? "", /Avenida de los Pinos 245/);
-    for (const fieldId of ["contact.mailing_address", "partner.address", "parent1.address", "parent2.address", "children.1.address", "visit.contact_address"]) {
+    for (const fieldId of ["contact.mailing_address", "partner.address", "mother.address", "father.address", "children.1.address", "visit.contact_address"]) {
       const prompt = fields.find((field) => field.id === fieldId)?.prompt ?? "";
       assert.match(prompt, /escribe MISMA/, fieldId);
       assert.match(prompt, /Calle Principal 10/, fieldId);

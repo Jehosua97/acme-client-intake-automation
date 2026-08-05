@@ -1,10 +1,14 @@
 import type { Answer, FieldDefinition, FieldKind } from "./types.js";
 import { addressPrompt } from "./address.js";
+import { isKnownParent } from "./family.js";
 
 type Answers = Readonly<Record<string, Answer>>;
 const always = () => true;
 const isYes = (fieldId: string) => (answers: Answers) => answers[fieldId]?.value === true;
 const isNotReportedDeceased = (fieldId: string) => (answers: Answers) => answers[fieldId]?.value !== "FALLECIDO/A";
+const isKnownAndNotDeceased = (fullNameFieldId: string, maritalStatusFieldId: string) => (answers: Answers) => (
+  isKnownParent(fullNameFieldId)(answers) && isNotReportedDeceased(maritalStatusFieldId)(answers)
+);
 
 let order = 0;
 const field = (
@@ -69,21 +73,21 @@ const core: FieldDefinition[] = [
   field("previous_partner.from", "Familia", "Inicio de relación anterior", "¿Cuándo comenzó esa relación? Usa DD/MM/AAAA.", "date", { applies: isYes("family.had_previous_partner") }),
   field("previous_partner.until", "Familia", "Fin de relación anterior", "¿Cuándo terminó? Usa DD/MM/AAAA.", "date", { applies: isYes("family.had_previous_partner") }),
 
-  field("parent1.full_name", "Familia", "Nombre completo de primer padre/madre", "Ahora tus padres. ¿Cuál es el nombre completo de tu primer padre o madre, incluyendo todos sus nombres y apellidos?", "text", { forms: ["IMM5707"] }),
-  field("parent1.birth_date", "Familia", "Nacimiento de primer padre/madre", "¿Cuál es su fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5707"] }),
-  field("parent1.birth_country", "Familia", "País natal de primer padre/madre", "¿En qué país nació?", "text", { forms: ["IMM5707"] }),
-  field("parent1.marital_status", "Familia", "Estado civil de primer padre/madre", "¿Cuál es el estado civil actual de tu primer padre o madre? Si falleció, indícalo aquí como \"Fallecido\".", "text", { forms: ["IMM5707"] }),
-  field("parent1.address", "Familia", "Dirección de primer padre/madre", "¿Cuál es su dirección actual?", "text", { applies: isNotReportedDeceased("parent1.marital_status"), forms: ["IMM5707"] }),
-  field("parent1.occupation", "Familia", "Ocupación de primer padre/madre", "¿Cuál es su ocupación actual? Si está retirado/a, indícalo.", "text", { applies: isNotReportedDeceased("parent1.marital_status"), forms: ["IMM5707"] }),
-  field("parent1.accompanies", "Familia", "Primer padre/madre acompaña", "¿Te acompañará a Canadá? Sí o No.", "yes_no", { applies: isNotReportedDeceased("parent1.marital_status"), forms: ["IMM5707"] }),
+  field("mother.full_name", "Familia", "Nombre completo de la madre", "Ahora hablemos de tu madre. ¿Cuál es su nombre completo, incluyendo todos sus nombres y apellidos? Si no lo sabes, escribe NO SÉ.", "text", { forms: ["IMM5707"] }),
+  field("mother.birth_date", "Familia", "Nacimiento de la madre", "¿Cuál es la fecha de nacimiento de tu madre? Usa DD/MM/AAAA.", "date", { applies: isKnownParent("mother.full_name"), forms: ["IMM5707"] }),
+  field("mother.birth_country", "Familia", "País natal de la madre", "¿En qué país nació tu madre?", "text", { applies: isKnownParent("mother.full_name"), forms: ["IMM5707"] }),
+  field("mother.marital_status", "Familia", "Estado civil de la madre", "¿Cuál es el estado civil actual de tu madre? Si falleció, indícalo aquí como \"Fallecido\".", "text", { applies: isKnownParent("mother.full_name"), forms: ["IMM5707"] }),
+  field("mother.address", "Familia", "Dirección de la madre", "¿Cuál es la dirección actual de tu madre?", "text", { applies: isKnownAndNotDeceased("mother.full_name", "mother.marital_status"), forms: ["IMM5707"] }),
+  field("mother.occupation", "Familia", "Ocupación de la madre", "¿Cuál es la ocupación actual de tu madre? Si está retirada, indícalo.", "text", { applies: isKnownAndNotDeceased("mother.full_name", "mother.marital_status"), forms: ["IMM5707"] }),
+  field("mother.accompanies", "Familia", "La madre acompaña", "¿Tu madre te acompañará a Canadá? Sí o No.", "yes_no", { applies: isKnownAndNotDeceased("mother.full_name", "mother.marital_status"), forms: ["IMM5707"] }),
 
-  field("parent2.full_name", "Familia", "Nombre completo de segundo padre/madre", "¿Cuál es el nombre completo de tu segundo padre o madre, incluyendo todos sus nombres y apellidos?", "text", { forms: ["IMM5707"] }),
-  field("parent2.birth_date", "Familia", "Nacimiento de segundo padre/madre", "¿Cuál es su fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5707"] }),
-  field("parent2.birth_country", "Familia", "País natal de segundo padre/madre", "¿En qué país nació?", "text", { forms: ["IMM5707"] }),
-  field("parent2.marital_status", "Familia", "Estado civil de segundo padre/madre", "¿Cuál es el estado civil actual de tu segundo padre o madre? Si falleció, indícalo aquí como \"Fallecido\".", "text", { forms: ["IMM5707"] }),
-  field("parent2.address", "Familia", "Dirección de segundo padre/madre", "¿Cuál es su dirección actual?", "text", { applies: isNotReportedDeceased("parent2.marital_status"), forms: ["IMM5707"] }),
-  field("parent2.occupation", "Familia", "Ocupación de segundo padre/madre", "¿Cuál es su ocupación actual? Si está retirado/a, indícalo.", "text", { applies: isNotReportedDeceased("parent2.marital_status"), forms: ["IMM5707"] }),
-  field("parent2.accompanies", "Familia", "Segundo padre/madre acompaña", "¿Te acompañará a Canadá? Sí o No.", "yes_no", { applies: isNotReportedDeceased("parent2.marital_status"), forms: ["IMM5707"] }),
+  field("father.full_name", "Familia", "Nombre completo del padre", "Ahora hablemos de tu padre. ¿Cuál es su nombre completo, incluyendo todos sus nombres y apellidos? Si no lo sabes, escribe NO SÉ.", "text", { forms: ["IMM5707"] }),
+  field("father.birth_date", "Familia", "Nacimiento del padre", "¿Cuál es la fecha de nacimiento de tu padre? Usa DD/MM/AAAA.", "date", { applies: isKnownParent("father.full_name"), forms: ["IMM5707"] }),
+  field("father.birth_country", "Familia", "País natal del padre", "¿En qué país nació tu padre?", "text", { applies: isKnownParent("father.full_name"), forms: ["IMM5707"] }),
+  field("father.marital_status", "Familia", "Estado civil del padre", "¿Cuál es el estado civil actual de tu padre? Si falleció, indícalo aquí como \"Fallecido\".", "text", { applies: isKnownParent("father.full_name"), forms: ["IMM5707"] }),
+  field("father.address", "Familia", "Dirección del padre", "¿Cuál es la dirección actual de tu padre?", "text", { applies: isKnownAndNotDeceased("father.full_name", "father.marital_status"), forms: ["IMM5707"] }),
+  field("father.occupation", "Familia", "Ocupación del padre", "¿Cuál es la ocupación actual de tu padre? Si está retirado, indícalo.", "text", { applies: isKnownAndNotDeceased("father.full_name", "father.marital_status"), forms: ["IMM5707"] }),
+  field("father.accompanies", "Familia", "El padre acompaña", "¿Tu padre te acompañará a Canadá? Sí o No.", "yes_no", { applies: isKnownAndNotDeceased("father.full_name", "father.marital_status"), forms: ["IMM5707"] }),
 
   field("children.count", "Familia", "Cantidad de hijos", "¿Cuántos hijos tienes? Incluye biológicos, adoptados, hijastros y de relaciones anteriores. Escribe 0 si no tienes.", "integer", { forms: ["IMM5707"] }),
 
