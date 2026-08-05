@@ -28,7 +28,7 @@ The solution turns that process into a persistent, auditable workflow while pres
 - The customer provides explicit consent before collection begins.
 - Questions are delivered one at a time and validated according to their data type.
 - Every response and conversation position is persisted, allowing interruption and recovery at any moment.
-- Customers can use `SALTAR`, `PAUSAR`, `CONTINUAR`, `RESUMEN`, and `PENDIENTES`.
+- Customers can use `SALTAR`, `ALTO`/`PAUSA`/`PAUSAR`/`DETENTE`/`PARA`, `CONTINUAR`, `RESUMEN`, and `PENDIENTES`.
 - Passport images and PDF files are placed in a dedicated Google Drive folder for each customer.
 - Passport fields are flagged for manual staff review instead of asking the customer to transcribe information already visible in the document.
 - A local dashboard exposes case status, completion, answers, notes, custom fields, and Drive links.
@@ -162,6 +162,7 @@ Sending `INICIAR BOT` again does not reset an active case.
 |---|---|
 | `SALTAR` | Marks the current answer as pending and advances |
 | `PAUSAR` | Stops questions without losing progress |
+| `ALTO`, `PAUSA`, `DETENTE`, `PARA` | Pause aliases with the same behavior as `PAUSAR` |
 | `CONTINUAR` | Resumes from persisted state |
 | `RESUMEN` | Returns completion by section |
 | `PENDIENTES` | Lists missing customer-provided information |

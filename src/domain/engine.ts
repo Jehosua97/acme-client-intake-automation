@@ -5,6 +5,16 @@ import { crossFieldIssues } from "./consistency.js";
 
 export const CONSENT_VERSION = "2026-08-05-v1";
 const SKIP = new Set(["saltar", "no sé", "no se", "no tengo", "no aplica", "n/a", "pendiente", "después", "despues"]);
+const PAUSE_COMMANDS = new Set(["alto", "pausa", "pausar", "detente", "para"]);
+const INTAKE_OVERVIEW = `Antes de empezar, te explico cómo será el proceso. Normalmente toma entre 30 y 45 minutos en total y está dividido en 5 bloques:
+
+1. Datos personales y residencia: aproximadamente 4 respuestas; varios datos se toman del pasaporte.
+2. Familia: 20 preguntas base; pueden agregarse otras si tienes pareja o hijos.
+3. Contacto e idiomas: aproximadamente 15 preguntas.
+4. Estudios y actividades de los últimos 10 años: mínimo 9 preguntas; aumenta según tus periodos.
+5. Viaje a Canadá e historial de viajes: mínimo 8 preguntas.
+
+Te preguntaré una cosa a la vez. No tienes que terminar hoy: puedes completarlo en varias interacciones o incluso en distintos días. Para detener las preguntas escribe ALTO, PAUSA, DETENTE o PARA. Todo tu avance queda guardado. Cuando quieras regresar, escribe CONTINUAR. Si te falta un dato, escribe SALTAR.`;
 const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]> = [
   ["identity.birth_country", "México"],
   ["identity.citizenship", "México"],
@@ -257,7 +267,7 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
       const defaultedFields = applyMexicoProfileDefaults(caseRecord);
       auditEvents.push({ event: "CONSENT_ACCEPTED", detail: { version: CONSENT_VERSION } });
       auditEvents.push({ event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } });
-      return { caseRecord, outgoing: [text("Gracias. Vamos paso a paso. Si no tienes un dato, escribe SALTAR; también puedes usar PAUSAR o RESUMEN en cualquier momento."), ...advance(caseRecord)], auditEvents };
+      return { caseRecord, outgoing: [text(INTAKE_OVERVIEW), ...advance(caseRecord)], auditEvents };
     }
     if (["no acepto", "rechazo", "no"].includes(command)) {
       caseRecord.status = "DECLINED";
@@ -272,10 +282,10 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
 
   if (command === "resumen") return { caseRecord, outgoing: [text(summary(caseRecord))], auditEvents };
   if (command === "pendientes") return { caseRecord, outgoing: [text(pendingSummary(caseRecord))], auditEvents };
-  if (command === "ayuda") return { caseRecord, outgoing: [text("Comandos disponibles: SALTAR, PAUSAR, CONTINUAR, RESUMEN, PENDIENTES y BORRAR MIS DATOS.")], auditEvents };
-  if (command === "pausar" && ["ACTIVE", "WAITING_FOR_CLIENT"].includes(caseRecord.status)) {
+  if (command === "ayuda") return { caseRecord, outgoing: [text("Comandos disponibles: SALTAR; ALTO, PAUSA, PAUSAR, DETENTE o PARA; CONTINUAR; RESUMEN; PENDIENTES y BORRAR MIS DATOS.")], auditEvents };
+  if (PAUSE_COMMANDS.has(command) && ["ACTIVE", "WAITING_FOR_CLIENT"].includes(caseRecord.status)) {
     caseRecord.status = "PAUSED";
-    return { caseRecord, outgoing: [text("Pausamos aquí. Tu avance quedó guardado. Escribe CONTINUAR cuando quieras retomar.")], auditEvents: [{ event: "CASE_PAUSED", detail: {} }] };
+    return { caseRecord, outgoing: [text("Pausamos aquí. Tu avance quedó guardado y no se perderá aunque regreses otro día. Escribe CONTINUAR cuando quieras retomar.")], auditEvents: [{ event: "CASE_PAUSED", detail: { command: command.toUpperCase() } }] };
   }
   if (command === "continuar" && ["PAUSED", "WAITING_FOR_CLIENT", "ACTIVE"].includes(caseRecord.status)) {
     caseRecord.status = "ACTIVE";

@@ -31,6 +31,11 @@ describe("conversation engine", () => {
     assert.equal(accepted.caseRecord.status, "ACTIVE");
     assert.equal(accepted.caseRecord.answers["contact.phone"]?.value, "+5215550000000");
     assert.equal(accepted.caseRecord.currentFieldId, "workflow.passport_uploaded");
+    const overview = accepted.outgoing[0]?.type === "text" ? accepted.outgoing[0].body : "";
+    assert.match(overview, /30 y 45 minutos/);
+    assert.match(overview, /5 bloques/);
+    assert.match(overview, /ALTO, PAUSA, DETENTE o PARA/);
+    assert.match(overview, /distintos días/);
   });
 
   it("prefills facts shared by Mexican-born clients living and applying in Mexico", () => {
@@ -133,6 +138,20 @@ describe("conversation engine", () => {
     const resumed = handleClientText(caseRecord, "CONTINUAR");
     assert.equal(resumed.caseRecord.status, "ACTIVE");
     assert.equal(resumed.caseRecord.currentFieldId, field);
+  });
+
+  it("accepts every advertised pause command without losing the current field", () => {
+    for (const command of ["ALTO", "PAUSA", "PAUSAR", "DETENTE", "PARA"]) {
+      const caseRecord = consentedCase();
+      const field = caseRecord.currentFieldId;
+      const paused = handleClientText(caseRecord, command);
+      assert.equal(paused.caseRecord.status, "PAUSED", command);
+      assert.equal(paused.caseRecord.currentFieldId, field, command);
+      assert.match(paused.outgoing[0]?.type === "text" ? paused.outgoing[0].body : "", /no se perderá/);
+      handleClientText(caseRecord, "CONTINUAR");
+      assert.equal(caseRecord.status, "ACTIVE", command);
+      assert.equal(caseRecord.currentFieldId, field, command);
+    }
   });
 
   it("counts a skipped passport as a required pending item", () => {
