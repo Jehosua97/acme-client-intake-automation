@@ -12,6 +12,8 @@ describe("SQLiteStore", () => {
     const store = new SQLiteStore(path.join(directory, "bot.sqlite"));
     try {
       const caseRecord = store.createCase("5215550000000@c.us", "+5215550000000", "Ana Pérez");
+      store.addChatAlias(caseRecord.id, "987654321@lid");
+      assert.equal(store.getCaseByChatId("987654321@lid")?.id, caseRecord.id);
       caseRecord.status = "AWAITING_CONSENT";
       const accepted = handleClientText(caseRecord, "ACEPTO");
       store.saveCase(accepted.caseRecord);

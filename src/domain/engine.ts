@@ -233,7 +233,9 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
       caseRecord.status = "ACTIVE";
       caseRecord.consentVersion = CONSENT_VERSION;
       caseRecord.consentedAt = now();
-      setAnswer(caseRecord, "contact.phone", caseRecord.phoneE164, "CONFIRMED", "SYSTEM", 100);
+      if (/^\+\d{7,15}$/.test(caseRecord.phoneE164)) {
+        setAnswer(caseRecord, "contact.phone", caseRecord.phoneE164, "CONFIRMED", "SYSTEM", 100);
+      }
       auditEvents.push({ event: "CONSENT_ACCEPTED", detail: { version: CONSENT_VERSION } });
       return { caseRecord, outgoing: [text("Gracias. Vamos paso a paso. Si no tienes un dato, escribe SALTAR; también puedes usar PAUSAR o RESUMEN en cualquier momento."), ...advance(caseRecord)], auditEvents };
     }

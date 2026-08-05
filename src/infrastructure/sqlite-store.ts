@@ -83,6 +83,10 @@ export class SQLiteStore {
         updated_at TEXT NOT NULL,
         PRIMARY KEY(client_id, field_id)
       );
+      CREATE TABLE IF NOT EXISTS client_chat_ids (
+        chat_id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE
+      );
       CREATE TABLE IF NOT EXISTS answer_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         client_id TEXT NOT NULL,
@@ -136,8 +140,10 @@ export class SQLiteStore {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS clients_updated_idx ON clients(updated_at DESC);
+      CREATE INDEX IF NOT EXISTS client_chat_ids_client_idx ON client_chat_ids(client_id);
       CREATE INDEX IF NOT EXISTS pending_documents_ready_idx ON pending_documents(status, available_at);
       CREATE INDEX IF NOT EXISTS documents_client_idx ON documents(client_id, created_at DESC);
+      INSERT OR IGNORE INTO client_chat_ids(chat_id,client_id) SELECT chat_id,id FROM clients;
     `);
   }
 
@@ -183,7 +189,9 @@ export class SQLiteStore {
   }
 
   getCaseByChatId(chatId: string): CaseRecord | null {
-    return this.hydrate(this.db.prepare("SELECT * FROM clients WHERE chat_id=?").get(chatId) as Row | undefined);
+    return this.hydrate(this.db.prepare(`SELECT c.* FROM clients c
+      LEFT JOIN client_chat_ids a ON a.client_id=c.id
+      WHERE c.chat_id=? OR a.chat_id=? LIMIT 1`).get(chatId, chatId) as Row | undefined);
   }
 
   getCaseById(id: string): CaseRecord | null {
@@ -198,8 +206,14 @@ export class SQLiteStore {
       VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
       caseRecord.id, chatId, phone, displayName, caseRecord.status, null, null, null, null, caseRecord.createdAt, caseRecord.updatedAt,
     );
+    this.addChatAlias(caseRecord.id, chatId);
     this.audit(caseRecord.id, "CLIENT_CREATED", { chatId });
     return caseRecord;
+  }
+
+  addChatAlias(clientId: string, chatId: string): void {
+    if (!chatId.trim()) return;
+    this.db.prepare("INSERT OR IGNORE INTO client_chat_ids(chat_id,client_id) VALUES(?,?)").run(chatId, clientId);
   }
 
   saveCase(caseRecord: CaseRecord): void {

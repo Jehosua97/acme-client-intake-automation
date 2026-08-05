@@ -31,6 +31,11 @@ export function normalizeWhatsAppMessageId(value: unknown): string | null {
   return `${id.fromMe === true}_${remote}_${localId}`;
 }
 
+interface ChatIdentity {
+  aliases: string[];
+  phone: string;
+}
+
 export interface WhatsAppRuntimeStatus {
   state: "STARTING" | "QR" | "AUTHENTICATED" | "READY" | "DISCONNECTED" | "ERROR";
   qrDataUrl: string | null;
@@ -80,6 +85,7 @@ export class WhatsAppLocalService {
     this.client.on("authenticated", () => { this.runtime = { ...this.runtime, state: "AUTHENTICATED", qrDataUrl: null, lastError: null }; });
     this.client.on("ready", () => {
       this.runtime = { state: "READY", qrDataUrl: null, account: this.client.info?.wid?._serialized ?? null, lastError: null };
+      void this.recoverRecentStartCommands();
     });
     this.client.on("auth_failure", (message) => { this.runtime = { ...this.runtime, state: "ERROR", lastError: message }; });
     this.client.on("disconnected", (reason) => { this.runtime = { ...this.runtime, state: "DISCONNECTED", lastError: String(reason) }; });
@@ -92,26 +98,60 @@ export class WhatsAppLocalService {
   }
 
   private async handleOwnerMessage(message: Message): Promise<void> {
+    let commandReceived = false;
+    let chatId: string | null = null;
+    const messageId = normalizeWhatsAppMessageId(message.id);
     try {
       if (message.body.trim().toLocaleUpperCase("es") !== "INICIAR BOT" || message.isStatus) return;
-      const chat = await message.getChat();
-      if (chat.isGroup) return;
-      const chatId = message.to;
-      const existing = this.store.getCaseByChatId(chatId);
-      if (existing && !["DRAFT", "DECLINED", "COMPLETE"].includes(existing.status)) {
-        this.store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status });
+      commandReceived = true;
+      if (messageId && this.store.isProcessed(messageId)) return;
+      const rawMessageId = message.id as unknown;
+      const remoteFromId = rawMessageId && typeof rawMessageId === "object"
+        ? serializedText((rawMessageId as Record<string, unknown>).remote)
+        : null;
+      chatId = serializedText(message.to) ?? remoteFromId;
+      if (!chatId) throw new Error("WhatsApp no devolvió un identificador válido para el chat");
+      if (chatId.endsWith("@g.us") || chatId.endsWith("@broadcast") || chatId.endsWith("@newsletter")) {
+        if (messageId) this.store.markProcessed(messageId);
         return;
       }
-      const contact = await this.client.getContactById(chatId);
-      const phone = `+${chatId.split("@")[0]?.replace(/\D/g, "") ?? ""}`;
-      const caseRecord = existing ?? this.store.createCase(chatId, phone, contact.pushname || contact.name || phone);
+      this.store.audit(null, "BOT_START_COMMAND_RECEIVED", { chatId, messageId });
+      const identity = await this.resolveChatIdentity(chatId, [remoteFromId, serializedText(message.to)]);
+      const existing = this.store.getCaseByChatId(chatId);
+      if (existing && !["DRAFT", "DECLINED", "COMPLETE"].includes(existing.status)) {
+        for (const alias of identity.aliases) this.store.addChatAlias(existing.id, alias);
+        if (["INVITED", "AWAITING_CONSENT"].includes(existing.status)) {
+          const result = acknowledgeInvitation(existing);
+          this.store.saveCase(result.caseRecord);
+          this.store.audit(existing.id, "CONSENT_REQUEST_RETRIED", { status: existing.status });
+          await this.sendAll(chatId, result.outgoing);
+        } else {
+          this.store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status });
+          await this.client.sendMessage(chatId, "Tu expediente ya está iniciado y conserva todo el avance. Puedes escribir CONTINUAR, RESUMEN o PENDIENTES.");
+        }
+        if (messageId) this.store.markProcessed(messageId);
+        this.runtime = { ...this.runtime, lastError: null };
+        return;
+      }
+      const displayName = identity.phone || "Cliente de WhatsApp";
+      const caseRecord = existing ?? this.store.createCase(chatId, identity.phone, displayName);
+      for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
       caseRecord.status = "INVITED";
       caseRecord.invitedAt = new Date().toISOString();
       const result = acknowledgeInvitation(caseRecord);
       this.store.saveCase(result.caseRecord);
       this.store.audit(caseRecord.id, "BOT_STARTED_FROM_CHAT", { chatId });
       await this.sendAll(chatId, result.outgoing);
-    } catch (error) { this.setError(error, false); }
+      if (messageId) this.store.markProcessed(messageId);
+      this.runtime = { ...this.runtime, lastError: null };
+    } catch (error) {
+      if (commandReceived) this.store.audit(null, "BOT_START_COMMAND_FAILED", {
+        chatId,
+        messageId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      this.setError(error, false);
+    }
   }
 
   private async handleClientMessage(message: Message): Promise<void> {
@@ -127,9 +167,28 @@ export class WhatsAppLocalService {
         return;
       }
       if (this.store.isProcessed(messageId)) return;
-      const chat = await message.getChat();
-      if (chat.isGroup) { this.store.markProcessed(messageId); return; }
-      const caseRecord = this.store.getCaseByChatId(message.from);
+      const rawMessageId = message.id as unknown;
+      const remoteFromId = rawMessageId && typeof rawMessageId === "object"
+        ? serializedText((rawMessageId as Record<string, unknown>).remote)
+        : null;
+      const sourceChatId = serializedText(message.from) ?? remoteFromId;
+      if (!sourceChatId) {
+        this.store.audit(null, "WHATSAPP_MESSAGE_WITHOUT_VALID_CHAT_IGNORED", { messageType: String(message.type ?? "unknown") });
+        return;
+      }
+      if (sourceChatId.endsWith("@g.us") || sourceChatId.endsWith("@broadcast") || sourceChatId.endsWith("@newsletter")) {
+        this.store.markProcessed(messageId);
+        return;
+      }
+      let caseRecord = this.store.getCaseByChatId(sourceChatId);
+      if (!caseRecord) {
+        const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
+        for (const alias of identity.aliases) {
+          caseRecord = this.store.getCaseByChatId(alias);
+          if (caseRecord) break;
+        }
+        if (caseRecord) for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
+      }
       if (!caseRecord) { this.store.markProcessed(messageId); return; }
 
       if (message.hasMedia && ["image", "document"].includes(message.type)) {
@@ -137,19 +196,19 @@ export class WhatsAppLocalService {
           const result = handleClientText(caseRecord, message.body || "");
           this.store.saveCase(result.caseRecord);
           this.store.markProcessed(messageId);
-          await this.sendAll(message.from, result.outgoing);
+          await this.sendAll(sourceChatId, result.outgoing);
           return;
         }
         this.store.queueDocument(caseRecord.id, messageId);
         this.store.markProcessed(messageId);
-        await this.client.sendMessage(message.from, "Recibí tu archivo. Lo estoy guardando en tu carpeta; te aviso en cuanto termine.");
+        await this.client.sendMessage(sourceChatId, "Recibí tu archivo. Lo estoy guardando en tu carpeta; te aviso en cuanto termine.");
         void this.processPendingDocument();
         return;
       }
 
       if (message.hasMedia) {
         this.store.markProcessed(messageId);
-        await this.client.sendMessage(message.from, "Por ahora solo puedo guardar fotos y archivos PDF. Envíame el pasaporte en uno de esos formatos.");
+        await this.client.sendMessage(sourceChatId, "Por ahora solo puedo guardar fotos y archivos PDF. Envíame el pasaporte en uno de esos formatos.");
         return;
       }
 
@@ -157,7 +216,7 @@ export class WhatsAppLocalService {
       this.store.saveCase(result.caseRecord);
       for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, event.detail);
       this.store.markProcessed(messageId);
-      await this.sendAll(message.from, result.outgoing);
+      await this.sendAll(sourceChatId, result.outgoing);
     } catch (error) { this.setError(error, false); }
   }
 
@@ -203,6 +262,49 @@ export class WhatsAppLocalService {
     for (const message of outgoing) {
       if (message.type === "text") await this.client.sendMessage(chatId, message.body);
     }
+  }
+
+  private async recoverRecentStartCommands(): Promise<void> {
+    try {
+      const cutoff = Math.floor(Date.now() / 1_000) - 30 * 60;
+      // getChats()/message.getChat() currently throws for some WhatsApp LID
+      // records. Searching only the activation phrase avoids serializing every
+      // chat and lets a recent command survive an application restart.
+      const messages = await this.client.searchMessages("INICIAR BOT", { limit: 25 });
+      for (const message of messages) {
+        if (!message.fromMe || message.isStatus || message.timestamp < cutoff) continue;
+        if (message.body.trim().toLocaleUpperCase("es") !== "INICIAR BOT") continue;
+        const messageId = normalizeWhatsAppMessageId(message.id);
+        if (messageId && this.store.isProcessed(messageId)) continue;
+        this.store.audit(null, "RECENT_START_COMMAND_RECOVERED", {
+          messageId,
+        });
+        await this.handleOwnerMessage(message);
+      }
+    } catch (error) {
+      // Recovery is best-effort. Live message_create events remain active and
+      // a failed historical search must not make a healthy session look down.
+      this.store.audit(null, "START_COMMAND_RECOVERY_FAILED", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  private async resolveChatIdentity(primaryChatId: string, candidates: Array<string | null> = []): Promise<ChatIdentity> {
+    const aliases = new Set([primaryChatId, ...candidates.filter((value): value is string => Boolean(value))]);
+    try {
+      const mappings = await this.client.getContactLidAndPhone([...aliases]);
+      for (const mapping of mappings) {
+        if (mapping.lid) aliases.add(mapping.lid);
+        if (mapping.pn) aliases.add(mapping.pn);
+      }
+    } catch {
+      // Some WhatsApp contacts cannot be resolved immediately. The primary
+      // chat ID and Chat object ID remain enough to continue the conversation.
+    }
+    const phoneAddress = [...aliases].find((alias) => alias.endsWith("@c.us") || alias.endsWith("@s.whatsapp.net"));
+    const digits = phoneAddress?.split("@")[0]?.replace(/\D/g, "") ?? "";
+    return { aliases: [...aliases], phone: /^\d{7,15}$/.test(digits) ? `+${digits}` : "" };
   }
 
   private findBrowser(): string | undefined {
