@@ -22,9 +22,16 @@ it("excludes the questions removed from the client conversation", () => {
     "passport.israeli_national",
     "residence.status_from",
     "residence.status_until",
+    "parent1.deceased",
+    "parent2.deceased",
   ]) {
     assert.equal(ids.has(excluded), false, `unexpected client question: ${excluded}`);
   }
+});
+
+it("does not ask a separate deceased question for parents or children", () => {
+  const ids = catalogFor({ "children.count": { fieldId: "children.count", value: 1, status: "CONFIRMED", source: "CHAT", confidence: 100, updatedAt: new Date().toISOString() } }).map((field) => field.id);
+  assert.equal(ids.some((id) => id.endsWith(".deceased")), false);
 });
 
 it("uses one complete-name field instead of separate first and last names", () => {

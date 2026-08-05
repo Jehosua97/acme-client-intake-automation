@@ -34,7 +34,7 @@ describe("conversation engine", () => {
     const overview = accepted.outgoing[0]?.type === "text" ? accepted.outgoing[0].body : "";
     assert.match(overview, /30 y 45 minutos/);
     assert.match(overview, /5 bloques/);
-    assert.match(overview, /Familia: 20 preguntas base/);
+    assert.match(overview, /Familia: 18 preguntas base/);
     assert.match(overview, /ALTO, PAUSA, DETENTE o PARA/);
     assert.match(overview, /distintos días/);
   });
@@ -111,16 +111,17 @@ describe("conversation engine", () => {
     assert.equal(ids.has("partner.birth_date"), false);
   });
 
-  it("skips address, marital status, occupation and accompaniment for deceased relatives", () => {
+  it("infers deceased relatives from marital status and skips their remaining details", () => {
     const caseRecord = consentedCase();
-    caseRecord.answers["parent1.deceased"] = confirmed("parent1.deceased", true);
+    caseRecord.answers["parent1.marital_status"] = confirmed("parent1.marital_status", "FALLECIDO/A");
     caseRecord.answers["children.count"] = confirmed("children.count", 1);
-    caseRecord.answers["children.1.deceased"] = confirmed("children.1.deceased", true);
+    caseRecord.answers["children.1.marital_status"] = confirmed("children.1.marital_status", "FALLECIDO/A");
     const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
     for (const prefix of ["parent1", "children.1"]) {
       assert.equal(ids.has(`${prefix}.full_name`), true);
       assert.equal(ids.has(`${prefix}.birth_date`), true);
-      for (const suffix of ["address", "marital_status", "occupation", "accompanies"]) {
+      assert.equal(ids.has(`${prefix}.marital_status`), true);
+      for (const suffix of ["address", "occupation", "accompanies"]) {
         assert.equal(ids.has(`${prefix}.${suffix}`), false, `${prefix}.${suffix}`);
       }
     }

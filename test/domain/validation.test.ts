@@ -17,13 +17,11 @@ describe("answer validation", () => {
   });
 
   it("recognizes common and misspelled ways to say that a relative died", () => {
-    const deceased = field("yes_no", "parent1.deceased");
+    const deceased = field("text", "parent1.marital_status");
     for (const value of ["FINADO", "finada", "Falleció", "ya fallecido", "Muerta", "fayecido", "FAYECIDA", "difunto"]) {
-      assert.deepEqual(validateAnswer(deceased, value), { ok: true, value: true }, value);
+      assert.deepEqual(validateAnswer(deceased, value), { ok: true, value: "FALLECIDO/A" }, value);
     }
-    for (const value of ["No", "vive", "Está viva"]) {
-      assert.deepEqual(validateAnswer(deceased, value), { ok: true, value: false }, value);
-    }
+    assert.deepEqual(validateAnswer(deceased, "Casado"), { ok: true, value: "Casado" });
   });
 
   it("accepts current employment and validates month", () => {

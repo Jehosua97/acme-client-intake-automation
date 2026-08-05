@@ -3,7 +3,7 @@ import type { Answer, FieldDefinition, FieldKind } from "./types.js";
 type Answers = Readonly<Record<string, Answer>>;
 const always = () => true;
 const isYes = (fieldId: string) => (answers: Answers) => answers[fieldId]?.value === true;
-const isNotDeceased = (fieldId: string) => (answers: Answers) => answers[fieldId]?.value !== true;
+const isNotReportedDeceased = (fieldId: string) => (answers: Answers) => answers[fieldId]?.value !== "FALLECIDO/A";
 
 let order = 0;
 const field = (
@@ -68,20 +68,18 @@ const core: FieldDefinition[] = [
   field("parent1.full_name", "Familia", "Nombre completo de primer padre/madre", "Ahora tus padres. ¿Cuál es el nombre completo de tu primer padre o madre, incluyendo todos sus nombres y apellidos?", "text", { forms: ["IMM5707"] }),
   field("parent1.birth_date", "Familia", "Nacimiento de primer padre/madre", "¿Cuál es su fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5707"] }),
   field("parent1.birth_country", "Familia", "País natal de primer padre/madre", "¿En qué país nació?", "text", { forms: ["IMM5707"] }),
-  field("parent1.deceased", "Familia", "Primer padre/madre falleció", "¿Tu primer padre o madre ha fallecido? Responde No si vive. También puedes escribir FINADO/A, FALLECIÓ, MUERTO/A, FALLECIDO/A o FAYECIDO/A.", "yes_no", { forms: ["IMM5707"] }),
-  field("parent1.address", "Familia", "Dirección de primer padre/madre", "¿Cuál es su dirección actual?", "text", { applies: isNotDeceased("parent1.deceased"), forms: ["IMM5707"] }),
-  field("parent1.marital_status", "Familia", "Estado civil de primer padre/madre", "¿Cuál es su estado civil actual?", "text", { applies: isNotDeceased("parent1.deceased"), forms: ["IMM5707"] }),
-  field("parent1.occupation", "Familia", "Ocupación de primer padre/madre", "¿Cuál es su ocupación actual? Si está retirado/a, indícalo.", "text", { applies: isNotDeceased("parent1.deceased"), forms: ["IMM5707"] }),
-  field("parent1.accompanies", "Familia", "Primer padre/madre acompaña", "¿Te acompañará a Canadá? Sí o No.", "yes_no", { applies: isNotDeceased("parent1.deceased"), forms: ["IMM5707"] }),
+  field("parent1.marital_status", "Familia", "Estado civil de primer padre/madre", "¿Cuál es el estado civil actual de tu primer padre o madre? Si falleció, indícalo aquí como \"Fallecido\".", "text", { forms: ["IMM5707"] }),
+  field("parent1.address", "Familia", "Dirección de primer padre/madre", "¿Cuál es su dirección actual?", "text", { applies: isNotReportedDeceased("parent1.marital_status"), forms: ["IMM5707"] }),
+  field("parent1.occupation", "Familia", "Ocupación de primer padre/madre", "¿Cuál es su ocupación actual? Si está retirado/a, indícalo.", "text", { applies: isNotReportedDeceased("parent1.marital_status"), forms: ["IMM5707"] }),
+  field("parent1.accompanies", "Familia", "Primer padre/madre acompaña", "¿Te acompañará a Canadá? Sí o No.", "yes_no", { applies: isNotReportedDeceased("parent1.marital_status"), forms: ["IMM5707"] }),
 
   field("parent2.full_name", "Familia", "Nombre completo de segundo padre/madre", "¿Cuál es el nombre completo de tu segundo padre o madre, incluyendo todos sus nombres y apellidos?", "text", { forms: ["IMM5707"] }),
   field("parent2.birth_date", "Familia", "Nacimiento de segundo padre/madre", "¿Cuál es su fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5707"] }),
   field("parent2.birth_country", "Familia", "País natal de segundo padre/madre", "¿En qué país nació?", "text", { forms: ["IMM5707"] }),
-  field("parent2.deceased", "Familia", "Segundo padre/madre falleció", "¿Tu segundo padre o madre ha fallecido? Responde No si vive. También puedes escribir FINADO/A, FALLECIÓ, MUERTO/A, FALLECIDO/A o FAYECIDO/A.", "yes_no", { forms: ["IMM5707"] }),
-  field("parent2.address", "Familia", "Dirección de segundo padre/madre", "¿Cuál es su dirección actual?", "text", { applies: isNotDeceased("parent2.deceased"), forms: ["IMM5707"] }),
-  field("parent2.marital_status", "Familia", "Estado civil de segundo padre/madre", "¿Cuál es su estado civil actual?", "text", { applies: isNotDeceased("parent2.deceased"), forms: ["IMM5707"] }),
-  field("parent2.occupation", "Familia", "Ocupación de segundo padre/madre", "¿Cuál es su ocupación actual? Si está retirado/a, indícalo.", "text", { applies: isNotDeceased("parent2.deceased"), forms: ["IMM5707"] }),
-  field("parent2.accompanies", "Familia", "Segundo padre/madre acompaña", "¿Te acompañará a Canadá? Sí o No.", "yes_no", { applies: isNotDeceased("parent2.deceased"), forms: ["IMM5707"] }),
+  field("parent2.marital_status", "Familia", "Estado civil de segundo padre/madre", "¿Cuál es el estado civil actual de tu segundo padre o madre? Si falleció, indícalo aquí como \"Fallecido\".", "text", { forms: ["IMM5707"] }),
+  field("parent2.address", "Familia", "Dirección de segundo padre/madre", "¿Cuál es su dirección actual?", "text", { applies: isNotReportedDeceased("parent2.marital_status"), forms: ["IMM5707"] }),
+  field("parent2.occupation", "Familia", "Ocupación de segundo padre/madre", "¿Cuál es su ocupación actual? Si está retirado/a, indícalo.", "text", { applies: isNotReportedDeceased("parent2.marital_status"), forms: ["IMM5707"] }),
+  field("parent2.accompanies", "Familia", "Segundo padre/madre acompaña", "¿Te acompañará a Canadá? Sí o No.", "yes_no", { applies: isNotReportedDeceased("parent2.marital_status"), forms: ["IMM5707"] }),
 
   field("children.count", "Familia", "Cantidad de hijos", "¿Cuántos hijos tienes? Incluye biológicos, adoptados, hijastros y de relaciones anteriores. Escribe 0 si no tienes.", "integer", { forms: ["IMM5707"] }),
 
@@ -145,11 +143,10 @@ function repeatedChildren(answers: Answers): FieldDefinition[] {
       field(`${p}.full_name`, section, `Nombre completo hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su nombre completo, incluyendo todos sus nombres y apellidos?`, "text", { forms: ["IMM5707"] }),
       field(`${p}.birth_date`, section, `Nacimiento hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su fecha de nacimiento? Usa DD/MM/AAAA.`, "date", { forms: ["IMM5707"] }),
       field(`${p}.birth_country`, section, `País natal hijo/a ${index}`, `Hijo/a ${index}: ¿en qué país nació?`, "text", { forms: ["IMM5707"] }),
-      field(`${p}.deceased`, section, `Hijo/a ${index} falleció`, `Hijo/a ${index}: ¿ha fallecido? Responde No si vive. También puedes escribir FINADO/A, FALLECIÓ, MUERTO/A, FALLECIDO/A o FAYECIDO/A.`, "yes_no", { forms: ["IMM5707"] }),
-      field(`${p}.address`, section, `Dirección hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su dirección actual?`, "text", { applies: isNotDeceased(`${p}.deceased`), forms: ["IMM5707"] }),
-      field(`${p}.marital_status`, section, `Estado civil hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su estado civil?`, "text", { applies: isNotDeceased(`${p}.deceased`), forms: ["IMM5707"] }),
-      field(`${p}.occupation`, section, `Ocupación hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su ocupación? Si es menor, puedes indicar estudiante o no aplica.`, "text", { applies: isNotDeceased(`${p}.deceased`), forms: ["IMM5707"] }),
-      field(`${p}.accompanies`, section, `Hijo/a ${index} acompaña`, `Hijo/a ${index}: ¿te acompañará a Canadá? Sí o No.`, "yes_no", { applies: isNotDeceased(`${p}.deceased`), forms: ["IMM5707"] }),
+      field(`${p}.marital_status`, section, `Estado civil hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su estado civil actual? Si falleció, indícalo aquí como \"Fallecido\".`, "text", { forms: ["IMM5707"] }),
+      field(`${p}.address`, section, `Dirección hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su dirección actual?`, "text", { applies: isNotReportedDeceased(`${p}.marital_status`), forms: ["IMM5707"] }),
+      field(`${p}.occupation`, section, `Ocupación hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su ocupación? Si es menor, puedes indicar estudiante o no aplica.`, "text", { applies: isNotReportedDeceased(`${p}.marital_status`), forms: ["IMM5707"] }),
+      field(`${p}.accompanies`, section, `Hijo/a ${index} acompaña`, `Hijo/a ${index}: ¿te acompañará a Canadá? Sí o No.`, "yes_no", { applies: isNotReportedDeceased(`${p}.marital_status`), forms: ["IMM5707"] }),
     );
   }
   return result;
