@@ -154,6 +154,8 @@ describe("conversation engine", () => {
       const prompt = fields.find((field) => field.id === fieldId)?.prompt ?? "";
       assert.match(prompt, /escribe MISMA/, fieldId);
       assert.match(prompt, /Calle Principal 10/, fieldId);
+      assert.match(prompt, /escribe la nueva dirección completa/, fieldId);
+      assert.doesNotMatch(prompt, /nombre de la calle y número/, fieldId);
     }
 
     caseRecord.currentFieldId = "partner.address";

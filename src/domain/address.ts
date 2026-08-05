@@ -31,7 +31,7 @@ export function addressPrompt(basePrompt: string, fieldId: string, answers: Answ
   const reference = currentAddress
     ? `El domicilio que indicó el solicitante es: ${currentAddress}`
     : "El domicilio del solicitante todavía está pendiente.";
-  return `${basePrompt}\n\n${reference}\nSi la dirección es la misma que la del solicitante, escribe MISMA. Si es diferente, escríbela completa en este orden: nombre de la calle y número, colonia, delegación o municipio, ciudad y código postal.`;
+  return `${basePrompt}\n\n${reference}\nSi es la misma, escribe MISMA; si no, escribe la nueva dirección completa.`;
 }
 
 export type AddressResolution =
