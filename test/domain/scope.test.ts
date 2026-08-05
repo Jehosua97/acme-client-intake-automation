@@ -24,6 +24,20 @@ it("excludes the questions removed from the client conversation", () => {
     "residence.status_until",
     "parent1.deceased",
     "parent2.deceased",
+    "contact.mailing_unit",
+    "contact.mailing_street_number",
+    "contact.mailing_street_name",
+    "contact.mailing_city",
+    "contact.mailing_province",
+    "contact.mailing_postal_code",
+    "contact.mailing_district",
+    "contact.residential_same",
+    "contact.residential_unit",
+    "contact.residential_street_number",
+    "contact.residential_street_name",
+    "contact.residential_city",
+    "contact.residential_province",
+    "contact.residential_postal_code",
   ]) {
     assert.equal(ids.has(excluded), false, `unexpected client question: ${excluded}`);
   }

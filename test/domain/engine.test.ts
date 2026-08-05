@@ -136,6 +136,21 @@ describe("conversation engine", () => {
     assert.equal(ids.has("children.3.full_name"), false);
   });
 
+  it("collects each complete address in one answer and only asks for a mailing address when different", () => {
+    const caseRecord = consentedCase();
+    let fields = catalogFor(caseRecord.answers);
+    let ids = new Set(fields.map((field) => field.id));
+    assert.equal(ids.has("contact.residential_address"), true);
+    assert.equal(ids.has("contact.mailing_same"), true);
+    assert.equal(ids.has("contact.mailing_address"), false);
+    assert.match(fields.find((field) => field.id === "contact.residential_address")?.prompt ?? "", /Avenida de los Pinos 245/);
+
+    caseRecord.answers["contact.mailing_same"] = confirmed("contact.mailing_same", false);
+    fields = catalogFor(caseRecord.answers);
+    ids = new Set(fields.map((field) => field.id));
+    assert.equal(ids.has("contact.mailing_address"), true);
+  });
+
   it("creates repeated employment activities instead of fixed form rows", () => {
     const caseRecord = consentedCase();
     caseRecord.answers["employment.count"] = confirmed("employment.count", 4);
@@ -205,7 +220,7 @@ describe("conversation engine", () => {
       assert.ok(current, `missing definition for ${caseRecord.currentFieldId}`);
       let value = "Dato de prueba";
       if (current.kind === "yes_no") {
-        value = ["contact.residential_same", "residence.applying_from_current"].includes(current.id) ? "Sí" : "No";
+        value = ["contact.mailing_same", "residence.applying_from_current"].includes(current.id) ? "Sí" : "No";
       } else if (current.kind === "date") {
         value = current.id === "identity.birth_date" ? "01/01/1990"
           : current.id === "passport.issue_date" ? "01/01/2024"

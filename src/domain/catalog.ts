@@ -83,22 +83,9 @@ const core: FieldDefinition[] = [
 
   field("children.count", "Familia", "Cantidad de hijos", "¿Cuántos hijos tienes? Incluye biológicos, adoptados, hijastros y de relaciones anteriores. Escribe 0 si no tienes.", "integer", { forms: ["IMM5707"] }),
 
-  field("contact.mailing_unit", "Contacto", "Departamento postal", "Dirección postal: ¿cuál es el departamento o unidad? Si no aplica, escribe SALTAR.", "text", { required: false }),
-  field("contact.mailing_street_number", "Contacto", "Número exterior postal", "Dirección postal: ¿cuál es el número exterior?"),
-  field("contact.mailing_street_name", "Contacto", "Calle postal", "Dirección postal: ¿cuál es el nombre de la calle?"),
-  field("contact.mailing_city", "Contacto", "Ciudad postal", "Dirección postal: ¿cuál es la ciudad?"),
-  field("contact.mailing_province", "Contacto", "Estado o provincia postal", "Dirección postal: ¿cuál es el estado o provincia?"),
-  field("contact.mailing_country", "Contacto", "País postal", "Dirección postal: ¿cuál es el país?"),
-  field("contact.mailing_postal_code", "Contacto", "Código postal", "Dirección postal: ¿cuál es el código postal?"),
-  field("contact.mailing_district", "Contacto", "Distrito postal", "Dirección postal: ¿hay distrito o municipio adicional? Si no aplica, escribe SALTAR.", "text", { required: false }),
-  field("contact.residential_same", "Contacto", "Dirección residencial igual", "¿Tu dirección residencial es la misma que la postal? Sí o No.", "yes_no"),
-  field("contact.residential_unit", "Contacto", "Departamento residencial", "Dirección residencial: ¿cuál es el departamento o unidad? Si no aplica, escribe SALTAR.", "text", { required: false, applies: (a) => a["contact.residential_same"]?.value === false }),
-  field("contact.residential_street_number", "Contacto", "Número exterior residencial", "Dirección residencial: ¿cuál es el número exterior?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
-  field("contact.residential_street_name", "Contacto", "Calle residencial", "Dirección residencial: ¿cuál es la calle?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
-  field("contact.residential_city", "Contacto", "Ciudad residencial", "Dirección residencial: ¿cuál es la ciudad?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
-  field("contact.residential_province", "Contacto", "Estado o provincia residencial", "Dirección residencial: ¿cuál es el estado o provincia?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
-  field("contact.residential_country", "Contacto", "País residencial", "Dirección residencial: ¿cuál es el país?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
-  field("contact.residential_postal_code", "Contacto", "Código postal residencial", "Dirección residencial: ¿cuál es el código postal?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
+  field("contact.residential_address", "Contacto", "Domicilio actual completo", "¿Cuál es tu domicilio actual completo? Escríbelo en este orden: nombre de la calle y número, colonia, delegación o municipio, ciudad y código postal. Ejemplo ficticio: Avenida de los Pinos 245, Colonia Costa Verde, Municipio de Boca del Río, Veracruz, C.P. 94294."),
+  field("contact.mailing_same", "Contacto", "Dirección postal igual al domicilio", "¿Tu dirección para recibir correspondencia es la misma que tu domicilio actual? Sí o No.", "yes_no"),
+  field("contact.mailing_address", "Contacto", "Dirección postal completa", "¿Cuál es tu dirección completa para recibir correspondencia? Escríbela en este orden: nombre de la calle y número, colonia, delegación o municipio, ciudad y código postal. Ejemplo ficticio: Avenida de los Pinos 245, Colonia Costa Verde, Municipio de Boca del Río, Veracruz, C.P. 94294.", "text", { applies: (a) => a["contact.mailing_same"]?.value === false }),
   field("contact.email", "Contacto", "Correo electrónico", "¿Cuál es tu correo electrónico?", "email"),
   field("contact.phone", "Contacto", "Teléfono principal", "¿Cuál es tu teléfono principal con código de país?", "phone"),
   field("contact.phone_type", "Contacto", "Tipo de teléfono", "¿Ese teléfono es celular, casa o trabajo?"),
@@ -189,7 +176,7 @@ function repeatedTravel(answers: Answers): FieldDefinition[] {
 }
 
 export function catalogFor(answers: Answers): FieldDefinition[] {
-  const childInsert = core.findIndex((item) => item.id === "contact.mailing_unit");
+  const childInsert = core.findIndex((item) => item.id === "contact.residential_address");
   const employmentInsert = core.findIndex((item) => item.id === "visit.purpose");
   const withChildren = [...core.slice(0, childInsert), ...repeatedChildren(answers), ...core.slice(childInsert)];
   const adjustedEmploymentInsert = withChildren.findIndex((item) => item.id === "visit.purpose");
