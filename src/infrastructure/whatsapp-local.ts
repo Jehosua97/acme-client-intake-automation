@@ -31,6 +31,14 @@ export function normalizeWhatsAppMessageId(value: unknown): string | null {
   return `${id.fromMe === true}_${remote}_${localId}`;
 }
 
+export function repairWhatsAppMessageId(value: unknown): string | null {
+  const serialized = normalizeWhatsAppMessageId(value);
+  if (!serialized || !value || typeof value !== "object") return serialized;
+  const id = value as Record<string, unknown>;
+  if (!serializedText(id._serialized)) id._serialized = serialized;
+  return serialized;
+}
+
 interface ChatIdentity {
   aliases: string[];
   phone: string;
@@ -227,9 +235,20 @@ export class WhatsAppLocalService {
     try {
       job = this.store.claimDocument();
       if (!job) return;
-      const message = await this.client.getMessageById(job.whatsappMessageId);
+      let message: Message | null;
+      try {
+        message = await this.client.getMessageById(job.whatsappMessageId);
+      } catch (error) {
+        throw new Error(`No fue posible recuperar el mensaje desde WhatsApp: ${error instanceof Error ? error.message : String(error)}`);
+      }
       if (!message) throw new Error("WhatsApp ya no tiene disponible el mensaje del archivo");
-      const media = await message.downloadMedia();
+      if (!repairWhatsAppMessageId(message.id)) throw new Error("WhatsApp devolvió el archivo sin un identificador utilizable");
+      let media;
+      try {
+        media = await message.downloadMedia();
+      } catch (error) {
+        throw new Error(`No fue posible descargar el archivo desde WhatsApp: ${error instanceof Error ? error.message : String(error)}`);
+      }
       if (!media) throw new Error("No fue posible descargar el archivo de WhatsApp");
       if (!ALLOWED_MIME.has(media.mimetype)) {
         this.store.rejectDocument(job.id, `Formato no permitido: ${media.mimetype}`);

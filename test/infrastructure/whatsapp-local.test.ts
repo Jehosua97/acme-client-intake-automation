@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { normalizeWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
+import { normalizeWhatsAppMessageId, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
 
 describe("WhatsApp message ID normalization", () => {
   it("accepts the serialized ID provided by normal WhatsApp messages", () => {
@@ -20,5 +20,11 @@ describe("WhatsApp message ID normalization", () => {
   it("rejects malformed event IDs instead of passing objects to SQLite", () => {
     assert.equal(normalizeWhatsAppMessageId({ _serialized: {}, remote: null, id: null }), null);
     assert.equal(normalizeWhatsAppMessageId(undefined), null);
+  });
+
+  it("restores _serialized for media methods affected by current WhatsApp Web IDs", () => {
+    const id: Record<string, unknown> = { fromMe: false, remote: "5215550000000@lid", id: "ABC123", $1: "renamed-by-whatsapp" };
+    assert.equal(repairWhatsAppMessageId(id), "false_5215550000000@lid_ABC123");
+    assert.equal(id._serialized, "false_5215550000000@lid_ABC123");
   });
 });
