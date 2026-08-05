@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import type { FieldDefinition, FieldKind } from "../../src/domain/types.js";
 import { validateAnswer } from "../../src/domain/validation.js";
 
-const field = (kind: FieldKind): FieldDefinition => ({ id: "x", section: "x", label: "x", prompt: "x", kind, required: true, order: 1, applies: () => true, forms: [] });
+const field = (kind: FieldKind, id = "x"): FieldDefinition => ({ id, section: "x", label: "x", prompt: "x", kind, required: true, order: 1, applies: () => true, forms: [] });
 
 describe("answer validation", () => {
   it("rejects impossible calendar dates", () => {
@@ -16,9 +16,18 @@ describe("answer validation", () => {
     assert.deepEqual(validateAnswer(field("phone"), "+52 55 1234 5678"), { ok: true, value: "+525512345678" });
   });
 
+  it("recognizes common and misspelled ways to say that a relative died", () => {
+    const deceased = field("yes_no", "parent1.deceased");
+    for (const value of ["FINADO", "finada", "Falleció", "ya fallecido", "Muerta", "fayecido", "FAYECIDA", "difunto"]) {
+      assert.deepEqual(validateAnswer(deceased, value), { ok: true, value: true }, value);
+    }
+    for (const value of ["No", "vive", "Está viva"]) {
+      assert.deepEqual(validateAnswer(deceased, value), { ok: true, value: false }, value);
+    }
+  });
+
   it("accepts current employment and validates month", () => {
     assert.deepEqual(validateAnswer(field("year_month"), "ACTUAL"), { ok: true, value: "CURRENT" });
     assert.equal(validateAnswer(field("year_month"), "13/2020").ok, false);
   });
 });
-

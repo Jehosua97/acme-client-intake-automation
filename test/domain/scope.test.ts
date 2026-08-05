@@ -26,3 +26,11 @@ it("excludes the questions removed from the client conversation", () => {
     assert.equal(ids.has(excluded), false, `unexpected client question: ${excluded}`);
   }
 });
+
+it("uses one complete-name field instead of separate first and last names", () => {
+  const ids = catalogFor({}).map((field) => field.id);
+  assert.equal(ids.some((id) => id.endsWith(".first_names") || id.endsWith(".last_names")), false);
+  for (const required of ["identity.full_name", "parent1.full_name", "parent2.full_name"]) {
+    assert.equal(ids.includes(required), true, `missing complete-name field: ${required}`);
+  }
+});

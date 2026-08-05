@@ -30,8 +30,12 @@ export function validateAnswer(field: FieldDefinition, raw: string): ValidationR
   if (!value) return { ok: false, message: "No alcancé a leer una respuesta. Inténtalo otra vez." };
   switch (field.kind) {
     case "yes_no": {
-      const normalized = value.toLocaleLowerCase("es");
-      if (["sí", "si", "s", "yes"].includes(normalized)) return { ok: true, value: true };
+      const normalized = value.toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+      if (field.id.endsWith(".deceased")) {
+        if (/\b(finad[oa]|fallecio|fallecid[oa]|fayecid[oa]|muert[oa]|difunt[oa])\b/.test(normalized)) return { ok: true, value: true };
+        if (["vive", "vivo", "viva", "esta vivo", "esta viva"].includes(normalized)) return { ok: true, value: false };
+      }
+      if (["si", "s", "yes"].includes(normalized)) return { ok: true, value: true };
       if (["no", "n"].includes(normalized)) return { ok: true, value: false };
       return { ok: false, message: "Por favor responde únicamente Sí o No." };
     }

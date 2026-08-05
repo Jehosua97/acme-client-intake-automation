@@ -34,6 +34,7 @@ describe("conversation engine", () => {
     const overview = accepted.outgoing[0]?.type === "text" ? accepted.outgoing[0].body : "";
     assert.match(overview, /30 y 45 minutos/);
     assert.match(overview, /5 bloques/);
+    assert.match(overview, /Familia: 20 preguntas base/);
     assert.match(overview, /ALTO, PAUSA, DETENTE o PARA/);
     assert.match(overview, /distintos días/);
   });
@@ -61,35 +62,33 @@ describe("conversation engine", () => {
     handleClientText(caseRecord, "SALTAR"); // pasaporte pendiente
     handleClientText(caseRecord, "SALTAR"); // UCI opcional
     handleClientText(caseRecord, "Visa de visitante");
-    assert.equal(caseRecord.currentFieldId, "identity.last_names");
+    assert.equal(caseRecord.currentFieldId, "identity.full_name");
     const result = handleClientText(caseRecord, "SALTAR");
-    assert.equal(caseRecord.answers["identity.last_names"]?.status, "PENDING");
-    assert.equal(caseRecord.currentFieldId, "identity.first_names");
-    assert.doesNotMatch(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /apellidos completos/);
+    assert.equal(caseRecord.answers["identity.full_name"]?.status, "PENDING");
+    assert.equal(caseRecord.currentFieldId, "identity.birth_date");
+    assert.doesNotMatch(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /nombre completo/);
   });
 
   it("uses one compact confirmation for passport proposals", () => {
     const caseRecord = consentedCase();
     const result = handlePassportDocument(caseRecord, "media-1", [
-      { fieldId: "identity.last_names", value: "Pérez López", confidence: 99 },
-      { fieldId: "identity.first_names", value: "Ana María", confidence: 98 },
+      { fieldId: "identity.full_name", value: "Ana María Pérez López", confidence: 99 },
     ]);
     assert.equal(caseRecord.currentFieldId, "__proposal_batch__");
     const body = result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "";
-    assert.match(body, /Pérez López/);
-    assert.match(body, /Ana María/);
+    assert.match(body, /Ana María Pérez López/);
 
     handleClientText(caseRecord, "Sí");
-    assert.equal(caseRecord.answers["identity.last_names"]?.status, "CONFIRMED");
-    assert.notEqual(caseRecord.currentFieldId, "identity.last_names");
+    assert.equal(caseRecord.answers["identity.full_name"]?.status, "CONFIRMED");
+    assert.notEqual(caseRecord.currentFieldId, "identity.full_name");
   });
 
   it("leaves passport values for staff review without asking the client again", () => {
     const caseRecord = consentedCase();
     const result = handlePassportDocument(caseRecord, "drive-file-1", []);
-    assert.equal(caseRecord.answers["identity.last_names"]?.status, "PENDING");
-    assert.equal(caseRecord.answers["identity.last_names"]?.source, "DOCUMENT");
-    assert.notEqual(caseRecord.currentFieldId, "identity.last_names");
+    assert.equal(caseRecord.answers["identity.full_name"]?.status, "PENDING");
+    assert.equal(caseRecord.answers["identity.full_name"]?.source, "DOCUMENT");
+    assert.notEqual(caseRecord.currentFieldId, "identity.full_name");
     assert.ok(result.outgoing.length > 0);
   });
 
@@ -99,8 +98,8 @@ describe("conversation engine", () => {
     caseRecord.status = "WAITING_FOR_CLIENT";
     caseRecord.currentFieldId = null;
     const result = handleClientText(caseRecord, "CONTINUAR");
-    assert.equal(caseRecord.answers["identity.last_names"]?.status, "PENDING");
-    assert.notEqual(caseRecord.currentFieldId, "identity.last_names");
+    assert.equal(caseRecord.answers["identity.full_name"]?.status, "PENDING");
+    assert.notEqual(caseRecord.currentFieldId, "identity.full_name");
     assert.doesNotMatch(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /apellidos completos/i);
   });
 
@@ -108,17 +107,32 @@ describe("conversation engine", () => {
     const caseRecord = consentedCase();
     caseRecord.answers["family.has_partner"] = confirmed("family.has_partner", false);
     const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
-    assert.equal(ids.has("partner.first_names"), false);
+    assert.equal(ids.has("partner.full_name"), false);
     assert.equal(ids.has("partner.birth_date"), false);
+  });
+
+  it("skips address, marital status, occupation and accompaniment for deceased relatives", () => {
+    const caseRecord = consentedCase();
+    caseRecord.answers["parent1.deceased"] = confirmed("parent1.deceased", true);
+    caseRecord.answers["children.count"] = confirmed("children.count", 1);
+    caseRecord.answers["children.1.deceased"] = confirmed("children.1.deceased", true);
+    const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
+    for (const prefix of ["parent1", "children.1"]) {
+      assert.equal(ids.has(`${prefix}.full_name`), true);
+      assert.equal(ids.has(`${prefix}.birth_date`), true);
+      for (const suffix of ["address", "marital_status", "occupation", "accompanies"]) {
+        assert.equal(ids.has(`${prefix}.${suffix}`), false, `${prefix}.${suffix}`);
+      }
+    }
   });
 
   it("creates as many child records as declared", () => {
     const caseRecord = consentedCase();
     caseRecord.answers["children.count"] = confirmed("children.count", 2);
     const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
-    assert.equal(ids.has("children.1.first_names"), true);
-    assert.equal(ids.has("children.2.first_names"), true);
-    assert.equal(ids.has("children.3.first_names"), false);
+    assert.equal(ids.has("children.1.full_name"), true);
+    assert.equal(ids.has("children.2.full_name"), true);
+    assert.equal(ids.has("children.3.full_name"), false);
   });
 
   it("creates repeated employment activities instead of fixed form rows", () => {
@@ -206,8 +220,7 @@ describe("conversation engine", () => {
       else if (current.kind === "money") value = "5000";
       if (current.id === "workflow.passport_uploaded") {
         handlePassportDocument(caseRecord, "drive-file-1", [
-          { fieldId: "identity.last_names", value: "Pérez", confidence: 100 },
-          { fieldId: "identity.first_names", value: "Ana", confidence: 100 },
+          { fieldId: "identity.full_name", value: "Ana Pérez", confidence: 100 },
           { fieldId: "identity.birth_date", value: "1990-01-01", confidence: 100 },
           { fieldId: "identity.birth_city", value: "Ciudad", confidence: 100 },
           { fieldId: "identity.birth_country", value: "México", confidence: 100 },

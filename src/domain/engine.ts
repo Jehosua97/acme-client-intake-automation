@@ -9,7 +9,7 @@ const PAUSE_COMMANDS = new Set(["alto", "pausa", "pausar", "detente", "para"]);
 const INTAKE_OVERVIEW = `Antes de empezar, te explico cómo será el proceso. Normalmente toma entre 30 y 45 minutos en total y está dividido en 5 bloques:
 
 1. Datos personales y residencia: aproximadamente 4 respuestas; varios datos se toman del pasaporte.
-2. Familia: 20 preguntas base; pueden agregarse otras si tienes pareja o hijos.
+2. Familia: 20 preguntas base; pueden agregarse otras si tienes pareja o hijos, y se reducen si algún familiar falleció.
 3. Contacto e idiomas: aproximadamente 15 preguntas.
 4. Estudios y actividades de los últimos 10 años: mínimo 9 preguntas; aumenta según tus periodos.
 5. Viaje a Canadá e historial de viajes: mínimo 8 preguntas.
@@ -25,8 +25,7 @@ const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]>
   ["contact.residential_country", "México"],
 ];
 const PASSPORT_MANUAL_REVIEW_FIELDS = [
-  "identity.last_names",
-  "identity.first_names",
+  "identity.full_name",
   "identity.birth_date",
   "identity.birth_city",
   "identity.birth_country",

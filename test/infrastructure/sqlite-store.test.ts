@@ -17,7 +17,7 @@ describe("SQLiteStore", () => {
       caseRecord.status = "AWAITING_CONSENT";
       const accepted = handleClientText(caseRecord, "ACEPTO");
       store.saveCase(accepted.caseRecord);
-      store.setStaffAnswer(caseRecord.id, "identity.last_names", "Pérez");
+      store.setStaffAnswer(caseRecord.id, "identity.full_name", "Ana Pérez");
       store.addCustomField(caseRecord.id, "Referencia", "Cliente recurrente");
 
       const queued = store.queueDocument(caseRecord.id, "wa-message-1");
@@ -33,7 +33,7 @@ describe("SQLiteStore", () => {
       });
 
       const reopened = store.getCaseByChatId("5215550000000@c.us");
-      assert.equal(reopened?.answers["identity.last_names"]?.value, "Pérez");
+      assert.equal(reopened?.answers["identity.full_name"]?.value, "Ana Pérez");
       const details = store.getClientDetails(caseRecord.id);
       assert.equal((details?.documents as unknown[]).length, 1);
       assert.equal((details?.customFields as unknown[]).length, 1);
