@@ -41,8 +41,6 @@ const core: FieldDefinition[] = [
 
   field("residence.current_country", "Residencia", "País de residencia", "¿En qué país vives actualmente?"),
   field("residence.current_status", "Residencia", "Estatus actual", "¿Qué estatus tienes ahí? Por ejemplo: ciudadanía, residencia permanente, trabajo, estudios o visita."),
-  field("residence.status_from", "Residencia", "Inicio del estatus", "¿Desde qué fecha tienes ese estatus? Usa DD/MM/AAAA.", "date"),
-  field("residence.status_until", "Residencia", "Fin del estatus", "¿Hasta qué fecha es válido? Si no vence, escribe SALTAR.", "date", { required: false }),
   field("residence.other_country_5y", "Residencia", "Otra residencia en 5 años", "En los últimos 5 años, ¿viviste más de 6 meses en otro país? Sí o No.", "yes_no"),
   field("residence.other_country", "Residencia", "Otro país", "¿En qué otro país viviste?", "text", { applies: isYes("residence.other_country_5y") }),
   field("residence.other_status", "Residencia", "Estatus en otro país", "¿Qué estatus tenías en ese país?", "text", { applies: isYes("residence.other_country_5y") }),

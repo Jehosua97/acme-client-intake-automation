@@ -5,6 +5,15 @@ import { crossFieldIssues } from "./consistency.js";
 
 export const CONSENT_VERSION = "2026-08-05-v1";
 const SKIP = new Set(["saltar", "no sé", "no se", "no tengo", "no aplica", "n/a", "pendiente", "después", "despues"]);
+const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]> = [
+  ["identity.birth_country", "México"],
+  ["identity.citizenship", "México"],
+  ["residence.current_country", "México"],
+  ["residence.current_status", "Ciudadano/a"],
+  ["residence.applying_from_current", true],
+  ["contact.mailing_country", "México"],
+  ["contact.residential_country", "México"],
+];
 const PASSPORT_MANUAL_REVIEW_FIELDS = [
   "identity.last_names",
   "identity.first_names",
@@ -19,6 +28,16 @@ const PASSPORT_MANUAL_REVIEW_FIELDS = [
 
 const now = () => new Date().toISOString();
 const text = (body: string): OutgoingMessage => ({ type: "text", body });
+
+function applyMexicoProfileDefaults(caseRecord: CaseRecord): string[] {
+  const applied: string[] = [];
+  for (const [fieldId, value] of MEXICO_PROFILE_DEFAULTS) {
+    if (caseRecord.answers[fieldId]) continue;
+    setAnswer(caseRecord, fieldId, value, "CONFIRMED", "SYSTEM", 100);
+    applied.push(fieldId);
+  }
+  return applied;
+}
 
 export function newCase(id: string, phoneE164: string): CaseRecord {
   const timestamp = now();
@@ -201,6 +220,7 @@ export function handlePassportDocument(
   documentId: string,
   proposals: Array<{ fieldId: string; value: string | number | boolean; confidence: number }>,
 ): EngineResult {
+  const defaultedFields = applyMexicoProfileDefaults(caseRecord);
   setAnswer(caseRecord, "workflow.passport_uploaded", documentId, "CONFIRMED", "DOCUMENT", 100);
   // Phase one deliberately has no OCR/AI. These values are visible as pending in
   // the staff panel, and are skipped in the chat so the client is not asked to
@@ -209,6 +229,7 @@ export function handlePassportDocument(
     if (!caseRecord.answers[fieldId]) setAnswer(caseRecord, fieldId, null, "PENDING", "DOCUMENT");
   }
   const result = applyProposals(caseRecord, proposals, "DOCUMENT");
+  if (defaultedFields.length) result.auditEvents.unshift({ event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } });
   result.auditEvents.unshift({ event: "PASSPORT_RECEIVED", detail: { documentId, proposals: proposals.length } });
   return result;
 }
@@ -233,7 +254,9 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
       if (/^\+\d{7,15}$/.test(caseRecord.phoneE164)) {
         setAnswer(caseRecord, "contact.phone", caseRecord.phoneE164, "CONFIRMED", "SYSTEM", 100);
       }
+      const defaultedFields = applyMexicoProfileDefaults(caseRecord);
       auditEvents.push({ event: "CONSENT_ACCEPTED", detail: { version: CONSENT_VERSION } });
+      auditEvents.push({ event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } });
       return { caseRecord, outgoing: [text("Gracias. Vamos paso a paso. Si no tienes un dato, escribe SALTAR; también puedes usar PAUSAR o RESUMEN en cualquier momento."), ...advance(caseRecord)], auditEvents };
     }
     if (["no acepto", "rechazo", "no"].includes(command)) {
@@ -243,6 +266,9 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
     }
     return { caseRecord, outgoing: [text("Para proteger tu información necesito una respuesta clara: escribe ACEPTO o NO ACEPTO.")], auditEvents };
   }
+
+  const defaultedFields = applyMexicoProfileDefaults(caseRecord);
+  if (defaultedFields.length) auditEvents.push({ event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } });
 
   if (command === "resumen") return { caseRecord, outgoing: [text(summary(caseRecord))], auditEvents };
   if (command === "pendientes") return { caseRecord, outgoing: [text(pendingSummary(caseRecord))], auditEvents };

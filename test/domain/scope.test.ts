@@ -20,6 +20,8 @@ it("excludes the questions removed from the client conversation", () => {
     "passport.number",
     "passport.taiwan_personal_id",
     "passport.israeli_national",
+    "residence.status_from",
+    "residence.status_until",
   ]) {
     assert.equal(ids.has(excluded), false, `unexpected client question: ${excluded}`);
   }

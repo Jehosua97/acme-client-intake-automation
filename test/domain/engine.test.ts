@@ -33,6 +33,24 @@ describe("conversation engine", () => {
     assert.equal(accepted.caseRecord.currentFieldId, "workflow.passport_uploaded");
   });
 
+  it("prefills facts shared by Mexican-born clients living and applying in Mexico", () => {
+    const caseRecord = consentedCase();
+    const expected: Record<string, Answer["value"]> = {
+      "identity.birth_country": "México",
+      "identity.citizenship": "México",
+      "residence.current_country": "México",
+      "residence.current_status": "Ciudadano/a",
+      "residence.applying_from_current": true,
+      "contact.mailing_country": "México",
+      "contact.residential_country": "México",
+    };
+    for (const [fieldId, value] of Object.entries(expected)) {
+      assert.equal(caseRecord.answers[fieldId]?.value, value);
+      assert.equal(caseRecord.answers[fieldId]?.source, "SYSTEM");
+      assert.equal(caseRecord.answers[fieldId]?.status, "CONFIRMED");
+    }
+  });
+
   it("does not immediately repeat a skipped question", () => {
     const caseRecord = consentedCase();
     handleClientText(caseRecord, "SALTAR"); // pasaporte pendiente
@@ -174,7 +192,7 @@ describe("conversation engine", () => {
           { fieldId: "identity.birth_date", value: "1990-01-01", confidence: 100 },
           { fieldId: "identity.birth_city", value: "Ciudad", confidence: 100 },
           { fieldId: "identity.birth_country", value: "México", confidence: 100 },
-          { fieldId: "identity.citizenship", value: "Mexicana", confidence: 100 },
+          { fieldId: "identity.citizenship", value: "México", confidence: 100 },
           { fieldId: "passport.issuing_country", value: "México", confidence: 100 },
           { fieldId: "passport.issue_date", value: "2024-01-01", confidence: 100 },
           { fieldId: "passport.expiry_date", value: "2034-01-01", confidence: 100 },
