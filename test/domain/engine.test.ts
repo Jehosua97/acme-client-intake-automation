@@ -136,19 +136,27 @@ describe("conversation engine", () => {
     assert.equal(ids.has("children.3.full_name"), false);
   });
 
-  it("collects each complete address in one answer and only asks for a mailing address when different", () => {
+  it("asks for the applicant address before alternate addresses and copies it when the answer is MISMA", () => {
     const caseRecord = consentedCase();
-    let fields = catalogFor(caseRecord.answers);
-    let ids = new Set(fields.map((field) => field.id));
-    assert.equal(ids.has("contact.residential_address"), true);
-    assert.equal(ids.has("contact.mailing_same"), true);
-    assert.equal(ids.has("contact.mailing_address"), false);
+    const applicantAddress = "Calle Principal 10, Colonia Centro, Municipio de Veracruz, Veracruz, C.P. 91700";
+    caseRecord.answers["contact.residential_address"] = confirmed("contact.residential_address", applicantAddress);
+    caseRecord.answers["family.has_partner"] = confirmed("family.has_partner", true);
+    caseRecord.answers["children.count"] = confirmed("children.count", 1);
+    caseRecord.answers["children.1.marital_status"] = confirmed("children.1.marital_status", "Soltero/a");
+    const fields = catalogFor(caseRecord.answers);
+    const ids = fields.map((field) => field.id);
+    assert.ok(ids.indexOf("contact.residential_address") < ids.indexOf("contact.mailing_address"));
+    assert.ok(ids.indexOf("contact.mailing_address") < ids.indexOf("partner.address"));
     assert.match(fields.find((field) => field.id === "contact.residential_address")?.prompt ?? "", /Avenida de los Pinos 245/);
+    for (const fieldId of ["contact.mailing_address", "partner.address", "parent1.address", "parent2.address", "children.1.address", "visit.contact_address"]) {
+      const prompt = fields.find((field) => field.id === fieldId)?.prompt ?? "";
+      assert.match(prompt, /escribe MISMA/, fieldId);
+      assert.match(prompt, /Calle Principal 10/, fieldId);
+    }
 
-    caseRecord.answers["contact.mailing_same"] = confirmed("contact.mailing_same", false);
-    fields = catalogFor(caseRecord.answers);
-    ids = new Set(fields.map((field) => field.id));
-    assert.equal(ids.has("contact.mailing_address"), true);
+    caseRecord.currentFieldId = "partner.address";
+    handleClientText(caseRecord, "MISMA");
+    assert.equal(caseRecord.answers["partner.address"]?.value, applicantAddress);
   });
 
   it("creates repeated employment activities instead of fixed form rows", () => {
@@ -220,7 +228,7 @@ describe("conversation engine", () => {
       assert.ok(current, `missing definition for ${caseRecord.currentFieldId}`);
       let value = "Dato de prueba";
       if (current.kind === "yes_no") {
-        value = ["contact.mailing_same", "residence.applying_from_current"].includes(current.id) ? "Sí" : "No";
+        value = current.id === "residence.applying_from_current" ? "Sí" : "No";
       } else if (current.kind === "date") {
         value = current.id === "identity.birth_date" ? "01/01/1990"
           : current.id === "passport.issue_date" ? "01/01/2024"

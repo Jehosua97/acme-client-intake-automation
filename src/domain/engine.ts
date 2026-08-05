@@ -2,6 +2,7 @@ import { catalogFor, fieldById } from "./catalog.js";
 import type { Answer, CaseRecord, EngineResult, FieldDefinition, OutgoingMessage, Progress } from "./types.js";
 import { validateAnswer } from "./validation.js";
 import { crossFieldIssues } from "./consistency.js";
+import { resolveAddressInput } from "./address.js";
 
 export const CONSENT_VERSION = "2026-08-05-v1";
 const SKIP = new Set(["saltar", "no sé", "no se", "no tengo", "no aplica", "n/a", "pendiente", "después", "despues"]);
@@ -335,10 +336,12 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
     return { caseRecord, outgoing: [text("Para leerlo necesito que lo envíes como foto o documento. Si no lo tienes ahora, escribe SALTAR.")], auditEvents };
   }
 
-  const validation = validateAnswer(current, input);
+  const addressResolution = resolveAddressInput(current.id, input, caseRecord.answers);
+  if (!addressResolution.ok) return { caseRecord, outgoing: [text(addressResolution.message)], auditEvents };
+  const validation = validateAnswer(current, addressResolution.value);
   if (!validation.ok) return { caseRecord, outgoing: [text(validation.message)], auditEvents };
   setAnswer(caseRecord, current.id, validation.value, "CONFIRMED", "CHAT", 100);
-  auditEvents.push({ event: "ANSWER_CONFIRMED", detail: { fieldId: current.id, source: "CHAT" } });
+  auditEvents.push({ event: "ANSWER_CONFIRMED", detail: { fieldId: current.id, source: "CHAT", copiedFromApplicantAddress: addressResolution.copiedFromApplicant } });
   caseRecord.updatedAt = now();
   return { caseRecord, outgoing: advance(caseRecord), auditEvents };
 }

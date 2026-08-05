@@ -38,6 +38,7 @@ it("excludes the questions removed from the client conversation", () => {
     "contact.residential_city",
     "contact.residential_province",
     "contact.residential_postal_code",
+    "contact.mailing_same",
   ]) {
     assert.equal(ids.has(excluded), false, `unexpected client question: ${excluded}`);
   }

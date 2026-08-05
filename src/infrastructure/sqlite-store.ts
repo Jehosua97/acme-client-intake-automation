@@ -7,6 +7,7 @@ import { fieldById } from "../domain/catalog.js";
 import { crossFieldIssues } from "../domain/consistency.js";
 import type { Answer, CaseRecord, CaseStatus } from "../domain/types.js";
 import { validateAnswer } from "../domain/validation.js";
+import { resolveAddressInput } from "../domain/address.js";
 
 export interface ClientSummary {
   id: string;
@@ -311,7 +312,9 @@ export class SQLiteStore {
     if (!caseRecord) throw new Error("CLIENT_NOT_FOUND");
     const definition = fieldById(fieldId, caseRecord.answers);
     if (!definition) throw new Error("FIELD_NOT_APPLICABLE");
-    const validation = validateAnswer(definition, rawValue);
+    const addressResolution = resolveAddressInput(fieldId, rawValue, caseRecord.answers);
+    if (!addressResolution.ok) throw new Error(`INVALID_VALUE:${addressResolution.message}`);
+    const validation = validateAnswer(definition, addressResolution.value);
     if (!validation.ok) throw new Error(`INVALID_VALUE:${validation.message}`);
     const answer: Answer = { fieldId, value: validation.value, status: "CONFIRMED", source: "STAFF", confidence: 100, updatedAt: iso() };
     caseRecord.answers[fieldId] = answer;

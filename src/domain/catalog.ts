@@ -1,4 +1,5 @@
 import type { Answer, FieldDefinition, FieldKind } from "./types.js";
+import { addressPrompt } from "./address.js";
 
 type Answers = Readonly<Record<string, Answer>>;
 const always = () => true;
@@ -49,6 +50,9 @@ const core: FieldDefinition[] = [
   field("residence.application_country", "Residencia", "País desde donde solicita", "¿Desde qué país estás haciendo la solicitud?", "text", { applies: (a) => a["residence.applying_from_current"]?.value === false }),
   field("residence.application_status", "Residencia", "Estatus en país de solicitud", "¿Qué estatus tienes en ese país?", "text", { applies: (a) => a["residence.applying_from_current"]?.value === false }),
 
+  field("contact.residential_address", "Residencia", "Domicilio actual completo", "¿Cuál es tu domicilio actual completo? Escríbelo en este orden: nombre de la calle y número, colonia, delegación o municipio, ciudad y código postal. Ejemplo ficticio: Avenida de los Pinos 245, Colonia Costa Verde, Municipio de Boca del Río, Veracruz, C.P. 94294."),
+  field("contact.mailing_address", "Residencia", "Dirección postal completa", "¿Cuál es tu dirección completa para recibir correspondencia?"),
+
   field("family.marital_status", "Familia", "Estado civil", "¿Cuál es tu estado civil actual?", "text", { forms: ["IMM5257", "IMM5707"] }),
   field("family.has_partner", "Familia", "Tiene pareja", "¿Tienes esposo/a, pareja de hecho o pareja conyugal actualmente? Sí o No.", "yes_no", { forms: ["IMM5257", "IMM5707"] }),
   field("partner.full_name", "Familia", "Nombre completo de pareja", "¿Cuál es el nombre completo de tu pareja, incluyendo todos sus nombres y apellidos?", "text", { applies: isYes("family.has_partner"), forms: ["IMM5257", "IMM5707"] }),
@@ -83,9 +87,6 @@ const core: FieldDefinition[] = [
 
   field("children.count", "Familia", "Cantidad de hijos", "¿Cuántos hijos tienes? Incluye biológicos, adoptados, hijastros y de relaciones anteriores. Escribe 0 si no tienes.", "integer", { forms: ["IMM5707"] }),
 
-  field("contact.residential_address", "Contacto", "Domicilio actual completo", "¿Cuál es tu domicilio actual completo? Escríbelo en este orden: nombre de la calle y número, colonia, delegación o municipio, ciudad y código postal. Ejemplo ficticio: Avenida de los Pinos 245, Colonia Costa Verde, Municipio de Boca del Río, Veracruz, C.P. 94294."),
-  field("contact.mailing_same", "Contacto", "Dirección postal igual al domicilio", "¿Tu dirección para recibir correspondencia es la misma que tu domicilio actual? Sí o No.", "yes_no"),
-  field("contact.mailing_address", "Contacto", "Dirección postal completa", "¿Cuál es tu dirección completa para recibir correspondencia? Escríbela en este orden: nombre de la calle y número, colonia, delegación o municipio, ciudad y código postal. Ejemplo ficticio: Avenida de los Pinos 245, Colonia Costa Verde, Municipio de Boca del Río, Veracruz, C.P. 94294.", "text", { applies: (a) => a["contact.mailing_same"]?.value === false }),
   field("contact.email", "Contacto", "Correo electrónico", "¿Cuál es tu correo electrónico?", "email"),
   field("contact.phone", "Contacto", "Teléfono principal", "¿Cuál es tu teléfono principal con código de país?", "phone"),
   field("contact.phone_type", "Contacto", "Tipo de teléfono", "¿Ese teléfono es celular, casa o trabajo?"),
@@ -176,13 +177,16 @@ function repeatedTravel(answers: Answers): FieldDefinition[] {
 }
 
 export function catalogFor(answers: Answers): FieldDefinition[] {
-  const childInsert = core.findIndex((item) => item.id === "contact.residential_address");
-  const employmentInsert = core.findIndex((item) => item.id === "visit.purpose");
+  const childInsert = core.findIndex((item) => item.id === "children.count") + 1;
   const withChildren = [...core.slice(0, childInsert), ...repeatedChildren(answers), ...core.slice(childInsert)];
   const adjustedEmploymentInsert = withChildren.findIndex((item) => item.id === "visit.purpose");
   const withEmployment = [...withChildren.slice(0, adjustedEmploymentInsert), ...repeatedEmployment(answers), ...withChildren.slice(adjustedEmploymentInsert)];
   const complete = [...withEmployment, ...repeatedTravel(answers)];
-  return complete.filter((item) => item.applies(answers)).map((item, index) => ({ ...item, order: index }));
+  return complete.filter((item) => item.applies(answers)).map((item, index) => ({
+    ...item,
+    prompt: addressPrompt(item.prompt, item.id, answers),
+    order: index,
+  }));
 }
 
 export function fieldById(id: string, answers: Answers): FieldDefinition | undefined {
