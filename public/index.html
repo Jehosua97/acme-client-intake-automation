@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ACME · Client Intake Automation</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <div class="brand-mark">MC</div>
+      <div><strong id="organizationName">ACME</strong><span>Control de expedientes</span></div>
+    </div>
+    <div class="connections">
+      <button id="whatsappStatus" class="connection" type="button"><i></i><span>WhatsApp</span><b>Iniciando</b></button>
+      <a id="driveStatus" class="connection" href="/auth/google"><i></i><span>Google Drive</span><b>Conectar</b></a>
+      <button id="backupButton" class="icon-button" title="Crear respaldo local" type="button">↧</button>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero">
+      <div><p class="eyebrow">Panel local</p><h1>Expedientes de clientes</h1><p>Seguimiento de información y documentos en un solo lugar.</p></div>
+      <div class="start-hint"><span>Para iniciar en WhatsApp</span><strong>Escribe INICIAR BOT en el chat del cliente</strong></div>
+    </section>
+
+    <section class="metrics" aria-label="Resumen">
+      <article><span>Total de clientes</span><strong id="metricTotal">0</strong></article>
+      <article><span>En proceso</span><strong id="metricActive">0</strong></article>
+      <article><span>Por revisar</span><strong id="metricReview">0</strong></article>
+      <article><span>Documentos</span><strong id="metricDocuments">0</strong></article>
+    </section>
+
+    <section class="panel">
+      <div class="panel-toolbar">
+        <div><h2>Clientes</h2><p id="resultCount">0 registros</p></div>
+        <div class="filters">
+          <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Buscar cliente o teléfono"></label>
+          <select id="statusFilter" aria-label="Filtrar por estado"><option value="">Todos los estados</option></select>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Cliente</th><th>Estado</th><th>Progreso</th><th>Documentos</th><th>Actualizado</th><th></th></tr></thead>
+          <tbody id="clientRows"></tbody>
+        </table>
+        <div id="emptyState" class="empty" hidden><div>◎</div><h3>Aún no hay expedientes</h3><p>Abre un chat individual y escribe <strong>INICIAR BOT</strong>.</p></div>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="clientDialog" class="client-dialog">
+    <div class="dialog-shell">
+      <header class="dialog-header">
+        <button id="closeDialog" class="icon-button" type="button">←</button>
+        <div class="client-avatar" id="detailAvatar"></div>
+        <div class="dialog-title"><input id="detailName" maxlength="120"><span id="detailPhone"></span></div>
+        <select id="detailStatus"></select>
+      </header>
+      <div class="detail-progress"><div><span>Progreso del expediente</span><b id="detailPercent">0%</b></div><div class="progress-track"><i id="detailProgressBar"></i></div></div>
+      <nav class="tabs"><button class="active" data-tab="information">Información</button><button data-tab="documents">Documentos <span id="documentBadge">0</span></button><button data-tab="extras">Notas y adicionales</button></nav>
+      <section id="informationTab" class="tab-content"></section>
+      <section id="documentsTab" class="tab-content" hidden></section>
+      <section id="extrasTab" class="tab-content" hidden>
+        <div class="notes-card"><label for="detailNotes">Notas internas</label><textarea id="detailNotes" rows="6" placeholder="Observaciones visibles solo para la empresa"></textarea><button id="saveNotes" class="primary-button">Guardar notas</button></div>
+        <div class="custom-card"><div class="section-heading"><div><h3>Datos adicionales</h3><p>Información libre que no pertenece al cuestionario.</p></div></div><div id="customFields"></div><form id="customFieldForm"><input name="label" placeholder="Nombre del dato" required><input name="value" placeholder="Valor" required><button class="primary-button">Agregar</button></form></div>
+      </section>
+    </div>
+  </dialog>
+
+  <dialog id="setupDialog" class="setup-dialog">
+    <button id="closeSetup" class="dialog-x">×</button>
+    <div id="qrArea"><p class="eyebrow">Conectar WhatsApp</p><h2>Escanea el código QR</h2><p>WhatsApp → Dispositivos vinculados → Vincular dispositivo</p><img id="qrImage" alt="Código QR de WhatsApp"><div class="qr-placeholder">Esperando código QR…</div></div>
+  </dialog>
+
+  <div id="toast" class="toast" role="status"></div>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

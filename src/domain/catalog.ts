@@ -1,0 +1,217 @@
+import type { Answer, FieldDefinition, FieldKind } from "./types.js";
+
+type Answers = Readonly<Record<string, Answer>>;
+const always = () => true;
+const isYes = (fieldId: string) => (answers: Answers) => answers[fieldId]?.value === true;
+
+let order = 0;
+const field = (
+  id: string,
+  section: string,
+  label: string,
+  prompt: string,
+  kind: FieldKind = "text",
+  options: { required?: boolean; applies?: (answers: Answers) => boolean; forms?: string[] } = {},
+): FieldDefinition => ({
+  id,
+  section,
+  label,
+  prompt,
+  kind,
+  required: options.required ?? true,
+  applies: options.applies ?? always,
+  forms: options.forms ?? ["IMM5257"],
+  order: order++,
+});
+
+const core: FieldDefinition[] = [
+  field("workflow.passport_available", "Inicio", "Pasaporte disponible", "Para ahorrar preguntas, ¿tienes ahora una foto clara de la página de datos de tu pasaporte? Sí o No.", "yes_no", { required: false, forms: ["INTERNAL"] }),
+  field("workflow.passport_uploaded", "Inicio", "Pasaporte recibido", "Envíame la foto del pasaporte como imagen. Si prefieres hacerlo después, escribe SALTAR.", "text", { required: false, applies: isYes("workflow.passport_available"), forms: ["INTERNAL"] }),
+  field("application.uci", "Inicio", "UCI", "Si alguna vez tuviste un número UCI de Canadá, escríbelo. Si no lo tienes o no lo conoces, escribe SALTAR.", "text", { required: false }),
+  field("application.visa_type", "Inicio", "Tipo de visa", "¿Solicitarás visa de visitante o visa de tránsito?"),
+  field("identity.last_names", "Datos personales", "Apellidos", "¿Cuáles son tus apellidos completos tal como aparecen en tu pasaporte?", "text", { forms: ["IMM5257", "IMM5707"] }),
+  field("identity.first_names", "Datos personales", "Nombres", "¿Cuáles son todos tus nombres tal como aparecen en tu pasaporte?", "text", { forms: ["IMM5257", "IMM5707"] }),
+  field("identity.native_name", "Datos personales", "Nombre en escritura nativa", "Si tu nombre también se escribe con otro alfabeto, escríbelo aquí. Si no aplica, escribe SALTAR.", "text", { required: false, forms: ["IMM5707"] }),
+  field("identity.used_other_name", "Datos personales", "Uso de otro nombre", "¿Alguna vez has usado legalmente otro nombre o apellido? Responde Sí o No.", "yes_no"),
+  field("identity.previous_name", "Datos personales", "Nombre anterior", "¿Cuál era ese nombre completo?", "text", { applies: isYes("identity.used_other_name") }),
+  field("identity.sex", "Datos personales", "Sexo en pasaporte", "¿Cuál es tu sexo tal como aparece en tu pasaporte?"),
+  field("identity.birth_date", "Datos personales", "Fecha de nacimiento", "¿Cuál es tu fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5257", "IMM5707"] }),
+  field("identity.birth_city", "Datos personales", "Ciudad de nacimiento", "¿En qué ciudad o pueblo naciste?"),
+  field("identity.birth_country", "Datos personales", "País de nacimiento", "¿En qué país o territorio naciste?", "text", { forms: ["IMM5257", "IMM5707"] }),
+  field("identity.citizenship", "Datos personales", "Ciudadanía", "¿Cuál es tu ciudadanía actual?"),
+
+  field("passport.number", "Pasaporte", "Número de pasaporte", "¿Cuál es tu número de pasaporte?"),
+  field("passport.issuing_country", "Pasaporte", "País emisor", "¿Qué país o territorio emitió tu pasaporte?"),
+  field("passport.issue_date", "Pasaporte", "Fecha de emisión", "¿Cuál es la fecha de emisión de tu pasaporte? Usa DD/MM/AAAA.", "date"),
+  field("passport.expiry_date", "Pasaporte", "Fecha de vencimiento", "¿Cuál es la fecha de vencimiento de tu pasaporte? Usa DD/MM/AAAA.", "date"),
+  field("passport.taiwan_personal_id", "Pasaporte", "Identificación personal de Taiwán", "¿Es un pasaporte de Taiwán que contiene número de identificación personal? Responde Sí o No; si no aplica, escribe SALTAR.", "yes_no", { required: false }),
+  field("passport.israeli_national", "Pasaporte", "Pasaporte nacional israelí", "¿Es un pasaporte nacional israelí? Responde Sí o No; si no aplica, escribe SALTAR.", "yes_no", { required: false }),
+
+  field("residence.current_country", "Residencia", "País de residencia", "¿En qué país vives actualmente?"),
+  field("residence.current_status", "Residencia", "Estatus actual", "¿Qué estatus tienes ahí? Por ejemplo: ciudadanía, residencia permanente, trabajo, estudios o visita."),
+  field("residence.status_from", "Residencia", "Inicio del estatus", "¿Desde qué fecha tienes ese estatus? Usa DD/MM/AAAA.", "date"),
+  field("residence.status_until", "Residencia", "Fin del estatus", "¿Hasta qué fecha es válido? Si no vence, escribe SALTAR.", "date", { required: false }),
+  field("residence.other_country_5y", "Residencia", "Otra residencia en 5 años", "En los últimos 5 años, ¿viviste más de 6 meses en otro país? Sí o No.", "yes_no"),
+  field("residence.other_country", "Residencia", "Otro país", "¿En qué otro país viviste?", "text", { applies: isYes("residence.other_country_5y") }),
+  field("residence.other_status", "Residencia", "Estatus en otro país", "¿Qué estatus tenías en ese país?", "text", { applies: isYes("residence.other_country_5y") }),
+  field("residence.other_period", "Residencia", "Periodo en otro país", "¿Desde qué fecha hasta qué fecha viviste ahí?", "text", { applies: isYes("residence.other_country_5y") }),
+  field("residence.applying_from_current", "Residencia", "Solicita desde residencia actual", "¿Estás haciendo esta solicitud desde el mismo país donde resides actualmente? Sí o No.", "yes_no"),
+  field("residence.application_country", "Residencia", "País desde donde solicita", "¿Desde qué país estás haciendo la solicitud?", "text", { applies: (a) => a["residence.applying_from_current"]?.value === false }),
+  field("residence.application_status", "Residencia", "Estatus en país de solicitud", "¿Qué estatus tienes en ese país?", "text", { applies: (a) => a["residence.applying_from_current"]?.value === false }),
+
+  field("family.marital_status", "Familia", "Estado civil", "¿Cuál es tu estado civil actual?", "text", { forms: ["IMM5257", "IMM5707"] }),
+  field("family.has_partner", "Familia", "Tiene pareja", "¿Tienes esposo/a, pareja de hecho o pareja conyugal actualmente? Sí o No.", "yes_no", { forms: ["IMM5257", "IMM5707"] }),
+  field("partner.last_names", "Familia", "Apellidos de pareja", "¿Cuáles son los apellidos de tu pareja?", "text", { applies: isYes("family.has_partner"), forms: ["IMM5257", "IMM5707"] }),
+  field("partner.first_names", "Familia", "Nombres de pareja", "¿Cuáles son los nombres de tu pareja?", "text", { applies: isYes("family.has_partner"), forms: ["IMM5257", "IMM5707"] }),
+  field("partner.birth_date", "Familia", "Nacimiento de pareja", "¿Cuál es su fecha de nacimiento? Usa DD/MM/AAAA.", "date", { applies: isYes("family.has_partner"), forms: ["IMM5707"] }),
+  field("partner.birth_country", "Familia", "País de nacimiento de pareja", "¿En qué país nació?", "text", { applies: isYes("family.has_partner"), forms: ["IMM5707"] }),
+  field("partner.address", "Familia", "Dirección de pareja", "¿Cuál es su dirección actual completa?", "text", { applies: isYes("family.has_partner"), forms: ["IMM5707"] }),
+  field("partner.occupation", "Familia", "Ocupación de pareja", "¿Cuál es su ocupación actual?", "text", { applies: isYes("family.has_partner"), forms: ["IMM5707"] }),
+  field("partner.accompanies", "Familia", "Pareja acompaña", "¿Tu pareja te acompañará a Canadá? Sí o No.", "yes_no", { applies: isYes("family.has_partner"), forms: ["IMM5707"] }),
+  field("partner.present_at_ceremony", "Familia", "Presente en ceremonia", "¿Tu pareja estuvo físicamente presente en la ceremonia de matrimonio? Sí o No.", "yes_no", { required: false, applies: isYes("family.has_partner"), forms: ["IMM5707"] }),
+  field("family.had_previous_partner", "Familia", "Relación anterior", "Antes de tu relación actual, ¿estuviste casado/a o en unión de hecho? Sí o No.", "yes_no"),
+  field("previous_partner.full_name", "Familia", "Nombre de pareja anterior", "¿Cuál es el nombre completo de esa persona?", "text", { applies: isYes("family.had_previous_partner") }),
+  field("previous_partner.birth_date", "Familia", "Nacimiento de pareja anterior", "¿Cuál es su fecha de nacimiento? Usa DD/MM/AAAA.", "date", { applies: isYes("family.had_previous_partner") }),
+  field("previous_partner.relationship", "Familia", "Tipo de relación anterior", "¿Fue matrimonio o unión de hecho?", "text", { applies: isYes("family.had_previous_partner") }),
+  field("previous_partner.from", "Familia", "Inicio de relación anterior", "¿Cuándo comenzó esa relación? Usa DD/MM/AAAA.", "date", { applies: isYes("family.had_previous_partner") }),
+  field("previous_partner.until", "Familia", "Fin de relación anterior", "¿Cuándo terminó? Usa DD/MM/AAAA.", "date", { applies: isYes("family.had_previous_partner") }),
+
+  field("parent1.last_names", "Familia", "Apellidos de primer padre/madre", "Ahora tus padres. ¿Cuáles son los apellidos de tu primer padre o madre?", "text", { forms: ["IMM5707"] }),
+  field("parent1.first_names", "Familia", "Nombres de primer padre/madre", "¿Cuáles son sus nombres?", "text", { forms: ["IMM5707"] }),
+  field("parent1.birth_date", "Familia", "Nacimiento de primer padre/madre", "¿Cuál es su fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5707"] }),
+  field("parent1.birth_country", "Familia", "País natal de primer padre/madre", "¿En qué país nació?", "text", { forms: ["IMM5707"] }),
+  field("parent1.address", "Familia", "Dirección de primer padre/madre", "¿Cuál es su dirección actual? Si falleció, indícalo.", "text", { forms: ["IMM5707"] }),
+  field("parent1.marital_status", "Familia", "Estado civil de primer padre/madre", "¿Cuál es su estado civil actual?", "text", { forms: ["IMM5707"] }),
+  field("parent1.occupation", "Familia", "Ocupación de primer padre/madre", "¿Cuál es su ocupación actual? Si falleció o está retirado/a, indícalo.", "text", { forms: ["IMM5707"] }),
+  field("parent1.accompanies", "Familia", "Primer padre/madre acompaña", "¿Te acompañará a Canadá? Sí o No.", "yes_no", { forms: ["IMM5707"] }),
+
+  field("parent2.last_names", "Familia", "Apellidos de segundo padre/madre", "¿Cuáles son los apellidos de tu segundo padre o madre?", "text", { forms: ["IMM5707"] }),
+  field("parent2.first_names", "Familia", "Nombres de segundo padre/madre", "¿Cuáles son sus nombres?", "text", { forms: ["IMM5707"] }),
+  field("parent2.birth_date", "Familia", "Nacimiento de segundo padre/madre", "¿Cuál es su fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5707"] }),
+  field("parent2.birth_country", "Familia", "País natal de segundo padre/madre", "¿En qué país nació?", "text", { forms: ["IMM5707"] }),
+  field("parent2.address", "Familia", "Dirección de segundo padre/madre", "¿Cuál es su dirección actual? Si falleció, indícalo.", "text", { forms: ["IMM5707"] }),
+  field("parent2.marital_status", "Familia", "Estado civil de segundo padre/madre", "¿Cuál es su estado civil actual?", "text", { forms: ["IMM5707"] }),
+  field("parent2.occupation", "Familia", "Ocupación de segundo padre/madre", "¿Cuál es su ocupación actual?", "text", { forms: ["IMM5707"] }),
+  field("parent2.accompanies", "Familia", "Segundo padre/madre acompaña", "¿Te acompañará a Canadá? Sí o No.", "yes_no", { forms: ["IMM5707"] }),
+
+  field("children.count", "Familia", "Cantidad de hijos", "¿Cuántos hijos tienes? Incluye biológicos, adoptados, hijastros y de relaciones anteriores. Escribe 0 si no tienes.", "integer", { forms: ["IMM5707"] }),
+
+  field("contact.mailing_unit", "Contacto", "Departamento postal", "Dirección postal: ¿cuál es el departamento o unidad? Si no aplica, escribe SALTAR.", "text", { required: false }),
+  field("contact.mailing_street_number", "Contacto", "Número exterior postal", "Dirección postal: ¿cuál es el número exterior?"),
+  field("contact.mailing_street_name", "Contacto", "Calle postal", "Dirección postal: ¿cuál es el nombre de la calle?"),
+  field("contact.mailing_city", "Contacto", "Ciudad postal", "Dirección postal: ¿cuál es la ciudad?"),
+  field("contact.mailing_province", "Contacto", "Estado o provincia postal", "Dirección postal: ¿cuál es el estado o provincia?"),
+  field("contact.mailing_country", "Contacto", "País postal", "Dirección postal: ¿cuál es el país?"),
+  field("contact.mailing_postal_code", "Contacto", "Código postal", "Dirección postal: ¿cuál es el código postal?"),
+  field("contact.mailing_district", "Contacto", "Distrito postal", "Dirección postal: ¿hay distrito o municipio adicional? Si no aplica, escribe SALTAR.", "text", { required: false }),
+  field("contact.residential_same", "Contacto", "Dirección residencial igual", "¿Tu dirección residencial es la misma que la postal? Sí o No.", "yes_no"),
+  field("contact.residential_unit", "Contacto", "Departamento residencial", "Dirección residencial: ¿cuál es el departamento o unidad? Si no aplica, escribe SALTAR.", "text", { required: false, applies: (a) => a["contact.residential_same"]?.value === false }),
+  field("contact.residential_street_number", "Contacto", "Número exterior residencial", "Dirección residencial: ¿cuál es el número exterior?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
+  field("contact.residential_street_name", "Contacto", "Calle residencial", "Dirección residencial: ¿cuál es la calle?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
+  field("contact.residential_city", "Contacto", "Ciudad residencial", "Dirección residencial: ¿cuál es la ciudad?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
+  field("contact.residential_province", "Contacto", "Estado o provincia residencial", "Dirección residencial: ¿cuál es el estado o provincia?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
+  field("contact.residential_country", "Contacto", "País residencial", "Dirección residencial: ¿cuál es el país?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
+  field("contact.residential_postal_code", "Contacto", "Código postal residencial", "Dirección residencial: ¿cuál es el código postal?", "text", { applies: (a) => a["contact.residential_same"]?.value === false }),
+  field("contact.email", "Contacto", "Correo electrónico", "¿Cuál es tu correo electrónico?", "email"),
+  field("contact.phone", "Contacto", "Teléfono principal", "¿Cuál es tu teléfono principal con código de país?", "phone"),
+  field("contact.phone_type", "Contacto", "Tipo de teléfono", "¿Ese teléfono es celular, casa o trabajo?"),
+
+  field("language.mother_tongue", "Idiomas", "Lengua materna", "¿Cuál es tu lengua materna?"),
+  field("language.english", "Idiomas", "Inglés", "¿Puedes comunicarte en inglés? Sí o No.", "yes_no"),
+  field("language.french", "Idiomas", "Francés", "¿Puedes comunicarte en francés? Sí o No.", "yes_no"),
+  field("language.preferred", "Idiomas", "Idioma preferido", "¿En qué idioma te sientes más cómodo/a para recibir atención?"),
+  field("language.official_test", "Idiomas", "Examen oficial", "¿Has tomado un examen oficial de inglés o francés? Sí o No.", "yes_no"),
+
+  field("education.has_postsecondary", "Educación", "Estudios postsecundarios", "¿Cursaste estudios después de preparatoria o bachillerato? Sí o No.", "yes_no"),
+  field("education.from", "Educación", "Inicio de estudios", "¿En qué mes y año comenzaste esos estudios? Usa MM/AAAA.", "year_month", { applies: isYes("education.has_postsecondary") }),
+  field("education.until", "Educación", "Fin de estudios", "¿En qué mes y año terminaste? Usa MM/AAAA.", "year_month", { applies: isYes("education.has_postsecondary") }),
+  field("education.field", "Educación", "Área de estudio", "¿Cuál fue tu carrera o área de estudio?", "text", { applies: isYes("education.has_postsecondary") }),
+  field("education.school", "Educación", "Institución", "¿Cuál fue la escuela o institución?", "text", { applies: isYes("education.has_postsecondary") }),
+  field("education.city", "Educación", "Ciudad de institución", "¿En qué ciudad está la institución?", "text", { applies: isYes("education.has_postsecondary") }),
+  field("education.province", "Educación", "Estado o provincia de institución", "¿En qué estado o provincia? Si no aplica, escribe SALTAR.", "text", { required: false, applies: isYes("education.has_postsecondary") }),
+  field("education.country", "Educación", "País de institución", "¿En qué país está?", "text", { applies: isYes("education.has_postsecondary") }),
+
+  field("employment.count", "Empleo", "Cantidad de actividades", "Para cubrir los últimos 10 años sin huecos, ¿cuántos periodos necesitas registrar? Incluye trabajo, estudios, desempleo y cuidado del hogar.", "integer"),
+
+  field("visit.purpose", "Viaje", "Propósito de visita", "¿Cuál es el propósito principal de tu visita a Canadá?"),
+  field("visit.from", "Viaje", "Inicio de visita", "¿En qué fecha planeas llegar a Canadá? Usa DD/MM/AAAA.", "date"),
+  field("visit.until", "Viaje", "Fin de visita", "¿En qué fecha planeas salir de Canadá? Usa DD/MM/AAAA.", "date"),
+  field("visit.funds_cad", "Viaje", "Fondos disponibles", "¿Cuánto dinero tendrás disponible para tu estancia, en dólares canadienses?", "money"),
+  field("visit.contact_name", "Viaje", "Persona o institución en Canadá", "¿Cuál es el nombre de la persona o institución que visitarás en Canadá?"),
+  field("visit.contact_relationship", "Viaje", "Relación con contacto", "¿Qué relación tiene contigo?"),
+  field("visit.contact_address", "Viaje", "Dirección del contacto", "¿Cuál es su dirección en Canadá?"),
+  field("travel_history.has_travel", "Viajes anteriores", "Viajes fuera de ciudadanía/residencia", "Desde que cumpliste 18 años o durante los últimos 5 años, lo que sea más reciente: ¿viajaste a un país distinto al de tu ciudadanía o residencia actual? Sí o No.", "yes_no", { forms: ["IMM5257-SCHEDULE-1"] }),
+  field("travel_history.count", "Viajes anteriores", "Cantidad de viajes", "¿Cuántos viajes distintos necesitas registrar?", "integer", { applies: isYes("travel_history.has_travel"), forms: ["IMM5257-SCHEDULE-1"] }),
+];
+
+function repeatedChildren(answers: Answers): FieldDefinition[] {
+  const raw = answers["children.count"]?.value;
+  const count = typeof raw === "number" ? Math.min(raw, 20) : 0;
+  const result: FieldDefinition[] = [];
+  for (let index = 1; index <= count; index++) {
+    const p = `children.${index}`;
+    const section = "Familia";
+    result.push(
+      field(`${p}.relationship`, section, `Relación hijo/a ${index}`, `Hijo/a ${index}: ¿qué relación tiene contigo (hijo/a, hijastro/a o adoptado/a)?`, "text", { forms: ["IMM5707"] }),
+      field(`${p}.last_names`, section, `Apellidos hijo/a ${index}`, `Hijo/a ${index}: ¿cuáles son sus apellidos?`, "text", { forms: ["IMM5707"] }),
+      field(`${p}.first_names`, section, `Nombres hijo/a ${index}`, `Hijo/a ${index}: ¿cuáles son sus nombres?`, "text", { forms: ["IMM5707"] }),
+      field(`${p}.birth_date`, section, `Nacimiento hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su fecha de nacimiento? Usa DD/MM/AAAA.`, "date", { forms: ["IMM5707"] }),
+      field(`${p}.birth_country`, section, `País natal hijo/a ${index}`, `Hijo/a ${index}: ¿en qué país nació?`, "text", { forms: ["IMM5707"] }),
+      field(`${p}.address`, section, `Dirección hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su dirección actual?`, "text", { forms: ["IMM5707"] }),
+      field(`${p}.marital_status`, section, `Estado civil hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su estado civil?`, "text", { forms: ["IMM5707"] }),
+      field(`${p}.occupation`, section, `Ocupación hijo/a ${index}`, `Hijo/a ${index}: ¿cuál es su ocupación? Si es menor, puedes indicar estudiante o no aplica.`, "text", { forms: ["IMM5707"] }),
+      field(`${p}.accompanies`, section, `Hijo/a ${index} acompaña`, `Hijo/a ${index}: ¿te acompañará a Canadá? Sí o No.`, "yes_no", { forms: ["IMM5707"] }),
+    );
+  }
+  return result;
+}
+
+function repeatedEmployment(answers: Answers): FieldDefinition[] {
+  const raw = answers["employment.count"]?.value;
+  const count = typeof raw === "number" ? Math.min(raw, 20) : 0;
+  const result: FieldDefinition[] = [];
+  for (let index = 1; index <= count; index++) {
+    const p = `employment.${index}`;
+    result.push(
+      field(`${p}.from`, "Empleo", `Inicio actividad ${index}`, `Actividad ${index}: ¿en qué mes y año comenzó? Usa MM/AAAA.`, "year_month"),
+      field(`${p}.until`, "Empleo", `Fin actividad ${index}`, `Actividad ${index}: ¿en qué mes y año terminó? Si continúa, escribe ACTUAL.`, "year_month"),
+      field(`${p}.activity`, "Empleo", `Actividad ${index}`, `Actividad ${index}: ¿cuál era tu ocupación o actividad?`),
+      field(`${p}.organization`, "Empleo", `Organización ${index}`, `Actividad ${index}: ¿cuál era la empresa, institución o situación?`),
+      field(`${p}.city`, "Empleo", `Ciudad actividad ${index}`, `Actividad ${index}: ¿en qué ciudad?`),
+      field(`${p}.country`, "Empleo", `País actividad ${index}`, `Actividad ${index}: ¿en qué país?`),
+      field(`${p}.province`, "Empleo", `Provincia actividad ${index}`, `Actividad ${index}: ¿en qué estado o provincia? Si no aplica, escribe SALTAR.`, "text", { required: false }),
+    );
+  }
+  return result;
+}
+
+function repeatedTravel(answers: Answers): FieldDefinition[] {
+  const raw = answers["travel_history.count"]?.value;
+  const count = typeof raw === "number" ? Math.min(raw, 20) : 0;
+  const result: FieldDefinition[] = [];
+  for (let index = 1; index <= count; index++) {
+    const p = `travel_history.${index}`;
+    result.push(
+      field(`${p}.from`, "Viajes anteriores", `Inicio viaje ${index}`, `Viaje ${index}: ¿en qué mes y año comenzó? Usa MM/AAAA.`, "year_month", { forms: ["IMM5257-SCHEDULE-1"] }),
+      field(`${p}.until`, "Viajes anteriores", `Fin viaje ${index}`, `Viaje ${index}: ¿en qué mes y año terminó? Usa MM/AAAA.`, "year_month", { forms: ["IMM5257-SCHEDULE-1"] }),
+      field(`${p}.country`, "Viajes anteriores", `País viaje ${index}`, `Viaje ${index}: ¿a qué país viajaste?`, "text", { forms: ["IMM5257-SCHEDULE-1"] }),
+      field(`${p}.city`, "Viajes anteriores", `Ciudad viaje ${index}`, `Viaje ${index}: ¿qué ciudad o lugar visitaste?`, "text", { forms: ["IMM5257-SCHEDULE-1"] }),
+      field(`${p}.purpose`, "Viajes anteriores", `Propósito viaje ${index}`, `Viaje ${index}: ¿cuál fue el propósito?`, "text", { forms: ["IMM5257-SCHEDULE-1"] }),
+    );
+  }
+  return result;
+}
+
+export function catalogFor(answers: Answers): FieldDefinition[] {
+  const childInsert = core.findIndex((item) => item.id === "contact.mailing_unit");
+  const employmentInsert = core.findIndex((item) => item.id === "visit.purpose");
+  const withChildren = [...core.slice(0, childInsert), ...repeatedChildren(answers), ...core.slice(childInsert)];
+  const adjustedEmploymentInsert = withChildren.findIndex((item) => item.id === "visit.purpose");
+  const withEmployment = [...withChildren.slice(0, adjustedEmploymentInsert), ...repeatedEmployment(answers), ...withChildren.slice(adjustedEmploymentInsert)];
+  const complete = [...withEmployment, ...repeatedTravel(answers)];
+  return complete.filter((item) => item.applies(answers)).map((item, index) => ({ ...item, order: index }));
+}
+
+export function fieldById(id: string, answers: Answers): FieldDefinition | undefined {
+  return catalogFor(answers).find((item) => item.id === id);
+}

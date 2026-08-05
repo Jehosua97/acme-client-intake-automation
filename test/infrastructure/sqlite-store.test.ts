@@ -1,0 +1,45 @@
+import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { describe, it } from "node:test";
+import { handleClientText } from "../../src/domain/engine.js";
+import { SQLiteStore } from "../../src/infrastructure/sqlite-store.js";
+
+describe("SQLiteStore", () => {
+  it("persists clients, answers, custom fields and Drive documents", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "msc-sqlite-"));
+    const store = new SQLiteStore(path.join(directory, "bot.sqlite"));
+    try {
+      const caseRecord = store.createCase("5215550000000@c.us", "+5215550000000", "Ana Pérez");
+      caseRecord.status = "AWAITING_CONSENT";
+      const accepted = handleClientText(caseRecord, "ACEPTO");
+      store.saveCase(accepted.caseRecord);
+      store.setStaffAnswer(caseRecord.id, "identity.last_names", "Pérez");
+      store.addCustomField(caseRecord.id, "Referencia", "Cliente recurrente");
+
+      const queued = store.queueDocument(caseRecord.id, "wa-message-1");
+      const claimed = store.claimDocument();
+      assert.equal(claimed?.id, queued.id);
+      store.completeDocument(claimed!, {
+        id: "document-1",
+        driveFileId: "drive-1",
+        name: "pasaporte.pdf",
+        mimeType: "application/pdf",
+        size: 1_024,
+        webViewLink: "https://drive.google.com/file/d/drive-1/view",
+      });
+
+      const reopened = store.getCaseByChatId("5215550000000@c.us");
+      assert.equal(reopened?.answers["identity.last_names"]?.value, "Pérez");
+      const details = store.getClientDetails(caseRecord.id);
+      assert.equal((details?.documents as unknown[]).length, 1);
+      assert.equal((details?.customFields as unknown[]).length, 1);
+      assert.equal(store.listClients()[0]?.documentCount, 1);
+      assert.equal(store.listClients()[0]?.pendingDocumentCount, 0);
+    } finally {
+      store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
+});

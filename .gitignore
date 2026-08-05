@@ -1,0 +1,16 @@
+.env
+.env.*
+!.env.example
+node_modules/
+dist/
+coverage/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.enc
+*.log
+*.tmp
+.data/
+.wwebjs_cache/
+needs.txt
