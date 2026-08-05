@@ -11,6 +11,26 @@ import type { PendingDocument, SQLiteStore } from "./sqlite-store.js";
 const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 const { Client, LocalAuth } = WhatsAppWeb;
 
+function serializedText(value: unknown): string | null {
+  if (typeof value === "string" && value.trim()) return value;
+  if (value && typeof value === "object") {
+    const nested = (value as Record<string, unknown>)._serialized;
+    if (typeof nested === "string" && nested.trim()) return nested;
+  }
+  return null;
+}
+
+export function normalizeWhatsAppMessageId(value: unknown): string | null {
+  if (!value || typeof value !== "object") return serializedText(value);
+  const id = value as Record<string, unknown>;
+  const serialized = serializedText(id._serialized);
+  if (serialized) return serialized;
+  const remote = serializedText(id.remote);
+  const localId = typeof id.id === "string" && id.id.trim() ? id.id : null;
+  if (!remote || !localId) return null;
+  return `${id.fromMe === true}_${remote}_${localId}`;
+}
+
 export interface WhatsAppRuntimeStatus {
   state: "STARTING" | "QR" | "AUTHENTICATED" | "READY" | "DISCONNECTED" | "ERROR";
   qrDataUrl: string | null;
@@ -63,13 +83,17 @@ export class WhatsAppLocalService {
     });
     this.client.on("auth_failure", (message) => { this.runtime = { ...this.runtime, state: "ERROR", lastError: message }; });
     this.client.on("disconnected", (reason) => { this.runtime = { ...this.runtime, state: "DISCONNECTED", lastError: String(reason) }; });
-    this.client.on("message_create", (message) => { if (message.fromMe) void this.handleOwnerMessage(message); });
-    this.client.on("message", (message) => { if (!message.fromMe) void this.handleClientMessage(message); });
+    this.client.on("message_create", (message) => {
+      if (message.fromMe) void this.handleOwnerMessage(message).catch((error) => this.setError(error, false));
+    });
+    this.client.on("message", (message) => {
+      if (!message.fromMe) void this.handleClientMessage(message).catch((error) => this.setError(error, false));
+    });
   }
 
   private async handleOwnerMessage(message: Message): Promise<void> {
-    if (message.body.trim().toLocaleUpperCase("es") !== "INICIAR BOT" || message.isStatus) return;
     try {
+      if (message.body.trim().toLocaleUpperCase("es") !== "INICIAR BOT" || message.isStatus) return;
       const chat = await message.getChat();
       if (chat.isGroup) return;
       const chatId = message.to;
@@ -87,14 +111,22 @@ export class WhatsAppLocalService {
       this.store.saveCase(result.caseRecord);
       this.store.audit(caseRecord.id, "BOT_STARTED_FROM_CHAT", { chatId });
       await this.sendAll(chatId, result.outgoing);
-    } catch (error) { this.setError(error); }
+    } catch (error) { this.setError(error, false); }
   }
 
   private async handleClientMessage(message: Message): Promise<void> {
-    if (message.isStatus || message.broadcast) return;
-    const messageId = message.id._serialized;
-    if (this.store.isProcessed(messageId)) return;
     try {
+      if (message.isStatus || message.broadcast) return;
+      const messageId = normalizeWhatsAppMessageId(message.id);
+      if (!messageId) {
+        const rawId = message.id as unknown;
+        this.store.audit(null, "WHATSAPP_MESSAGE_WITHOUT_VALID_ID_IGNORED", {
+          messageType: String(message.type ?? "unknown"),
+          idKeys: rawId && typeof rawId === "object" ? Object.keys(rawId as Record<string, unknown>) : [],
+        });
+        return;
+      }
+      if (this.store.isProcessed(messageId)) return;
       const chat = await message.getChat();
       if (chat.isGroup) { this.store.markProcessed(messageId); return; }
       const caseRecord = this.store.getCaseByChatId(message.from);
@@ -126,7 +158,7 @@ export class WhatsAppLocalService {
       for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, event.detail);
       this.store.markProcessed(messageId);
       await this.sendAll(message.from, result.outgoing);
-    } catch (error) { this.setError(error); }
+    } catch (error) { this.setError(error, false); }
   }
 
   private async processPendingDocument(): Promise<void> {

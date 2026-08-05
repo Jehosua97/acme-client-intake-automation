@@ -2,7 +2,7 @@ import "dotenv/config";
 import { backup } from "node:sqlite";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import Fastify from "fastify";
+import Fastify, { LogController } from "fastify";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { loadConfig } from "./config.js";
@@ -22,7 +22,7 @@ const store = new SQLiteStore(config.databasePath);
 const drive = new GoogleDriveService(config, store);
 await drive.initialize();
 const whatsapp = new WhatsAppLocalService(config, store, drive);
-const app = Fastify({ logger: true, disableRequestLogging: true, bodyLimit: 1024 * 1024 });
+const app = Fastify({ logger: true, logController: new LogController({ disableRequestLogging: true }), bodyLimit: 1024 * 1024 });
 
 await app.register(fastifyStatic, {
   root: path.resolve("public"),
