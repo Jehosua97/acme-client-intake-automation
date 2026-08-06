@@ -135,7 +135,7 @@ PORT=3188
 GOOGLE_REDIRECT_URI=http://127.0.0.1:3188/auth/google/callback
 GOOGLE_CLIENT_ID=your_client_id
 GOOGLE_CLIENT_SECRET=your_client_secret
-ORGANIZATION_NAME=ACME
+ORGANIZATION_NAME=MultiServicios
 ```
 
 The full callback belongs under **Authorized redirect URIs**. If a JavaScript origin is configured, it contains only `http://127.0.0.1:3188`.

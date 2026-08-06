@@ -22,7 +22,7 @@ function valueText(value){if(value===true)return"Sí";if(value===false)return"No
 async function loadSystem(){
   try{
     state.system=await api("/api/system/status");
-    const organization=state.system.organizationName||"ACME";$("#organizationName").textContent=organization;document.title=`${organization} · Client Intake Automation`;
+    const organization=state.system.organizationName||"MultiServicios";$("#organizationName").textContent=organization;document.title=`${organization} · Control de expedientes`;
     const wa=$("#whatsappStatus"),drive=$("#driveStatus");
     wa.className="connection "+(state.system.whatsapp.state==="READY"?"ready":state.system.whatsapp.state==="QR"?"warn":"");
     wa.querySelector("b").textContent={READY:"Conectado",QR:"Escanear QR",AUTHENTICATED:"Autenticando",STARTING:"Iniciando",DISCONNECTED:"Desconectado",ERROR:"Error"}[state.system.whatsapp.state]||state.system.whatsapp.state;
