@@ -6,6 +6,8 @@ import type { SQLiteStore } from "./sqlite-store.js";
 import { EncryptedTokenStore } from "./encrypted-token-store.js";
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
+const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
+const GOOGLE_SCOPES = [DRIVE_SCOPE, GMAIL_SEND_SCOPE] as const;
 type OAuthClient = InstanceType<typeof google.auth.OAuth2>;
 type OAuthCredentials = Parameters<OAuthClient["setCredentials"]>[0];
 
@@ -15,6 +17,7 @@ export class GoogleDriveService {
   private credentials: OAuthCredentials = {};
   private connected = false;
   private rootFolderLink: string | null = null;
+  private authorizedScopes = new Set<string>();
 
   constructor(private readonly config: Config, private readonly store: SQLiteStore) {
     this.oauth = new google.auth.OAuth2(config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET, config.GOOGLE_REDIRECT_URI);
@@ -37,6 +40,7 @@ export class GoogleDriveService {
     try {
       await this.ensureRootFolder();
       this.connected = true;
+      try { await this.refreshAuthorizedScopes(); } catch { this.authorizedScopes.clear(); }
     } catch {
       this.connected = false;
     }
@@ -46,22 +50,30 @@ export class GoogleDriveService {
     return Boolean(this.config.GOOGLE_CLIENT_ID && this.config.GOOGLE_CLIENT_SECRET);
   }
 
-  status(): { configured: boolean; connected: boolean; rootFolderLink: string | null } {
-    return { configured: this.isConfigured(), connected: this.connected, rootFolderLink: this.rootFolderLink };
+  status(): { configured: boolean; connected: boolean; rootFolderLink: string | null; gmailSendAuthorized: boolean } {
+    return {
+      configured: this.isConfigured(),
+      connected: this.connected,
+      rootFolderLink: this.rootFolderLink,
+      gmailSendAuthorized: this.authorizedScopes.has(GMAIL_SEND_SCOPE),
+    };
   }
 
   authorizationUrl(): string {
     if (!this.isConfigured()) throw new Error("Google OAuth no está configurado en .env");
-    return this.oauth.generateAuthUrl({ access_type: "offline", prompt: "consent", scope: [DRIVE_SCOPE] });
+    return this.oauth.generateAuthUrl({ access_type: "offline", prompt: "consent", include_granted_scopes: true, scope: [...GOOGLE_SCOPES] });
   }
 
   async authorize(code: string): Promise<void> {
     const { tokens } = await this.oauth.getToken(code);
-    this.credentials = tokens;
-    this.oauth.setCredentials(tokens);
-    await this.tokenStore.save(tokens);
+    const credentials = { ...tokens };
+    if (!credentials.refresh_token && this.credentials.refresh_token) credentials.refresh_token = this.credentials.refresh_token;
+    this.credentials = credentials;
+    this.oauth.setCredentials(credentials);
+    await this.tokenStore.save(credentials);
     await this.ensureRootFolder();
     this.connected = true;
+    await this.refreshAuthorizedScopes();
   }
 
   async disconnect(): Promise<void> {
@@ -70,6 +82,22 @@ export class GoogleDriveService {
     this.credentials = {};
     this.oauth.setCredentials({});
     this.connected = false;
+    this.authorizedScopes.clear();
+  }
+
+  async sendClientPdf(recipient: string, clientName: string, filename: string, pdf: Buffer): Promise<string> {
+    if (!this.connected) throw new Error("GOOGLE_NOT_CONNECTED");
+    if (!this.authorizedScopes.has(GMAIL_SEND_SCOPE)) await this.refreshAuthorizedScopes();
+    if (!this.authorizedScopes.has(GMAIL_SEND_SCOPE)) throw new Error("GMAIL_REAUTH_REQUIRED");
+
+    const safeClientName = clientName.replace(/[\r\n]+/g, " ").trim() || "cliente";
+    const subject = `Validación de expediente de visa - ${safeClientName}`;
+    const body = `Hola ${safeClientName},\n\nAdjuntamos un resumen de la información que nos compartiste para tu proceso de visa.\n\nPor favor revisa cuidadosamente el documento y confirma que tu correo electrónico y tus datos sean correctos. Si encuentras algún error o dato pendiente, comunícate con nuestro equipo para corregirlo.\n\nAtentamente,\n${this.config.ORGANIZATION_NAME}`;
+    const raw = this.mimeMessage(recipient, subject, body, filename, pdf);
+    const gmail = google.gmail({ version: "v1", auth: this.oauth });
+    const response = await gmail.users.messages.send({ userId: "me", requestBody: { raw } });
+    if (!response.data.id) throw new Error("GMAIL_SEND_FAILED");
+    return response.data.id;
   }
 
   async uploadClientDocument(
@@ -149,5 +177,45 @@ export class GoogleDriveService {
       : mimeType === "image/png" ? ".png"
       : mimeType === "image/webp" ? ".webp"
       : ".jpg";
+  }
+
+  private async refreshAuthorizedScopes(): Promise<void> {
+    const accessToken = await this.oauth.getAccessToken();
+    if (!accessToken.token) {
+      this.authorizedScopes.clear();
+      return;
+    }
+    const tokenInfo = await this.oauth.getTokenInfo(accessToken.token);
+    this.authorizedScopes = new Set(tokenInfo.scopes);
+  }
+
+  private mimeMessage(recipient: string, subject: string, body: string, filename: string, pdf: Buffer): string {
+    const boundary = `acme_${randomUUID().replace(/-/g, "")}`;
+    const encodedSubject = `=?UTF-8?B?${Buffer.from(subject, "utf8").toString("base64")}?=`;
+    const encodedBody = Buffer.from(body, "utf8").toString("base64").match(/.{1,76}/g)?.join("\r\n") ?? "";
+    const encodedAttachment = pdf.toString("base64").match(/.{1,76}/g)?.join("\r\n") ?? "";
+    const asciiFilename = filename.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-zA-Z0-9._ -]/g, "_");
+    const encodedFilename = encodeURIComponent(filename).replace(/'/g, "%27");
+    const message = [
+      `To: ${recipient}`,
+      `Subject: ${encodedSubject}`,
+      "MIME-Version: 1.0",
+      `Content-Type: multipart/mixed; boundary=\"${boundary}\"`,
+      "",
+      `--${boundary}`,
+      "Content-Type: text/plain; charset=UTF-8",
+      "Content-Transfer-Encoding: base64",
+      "",
+      encodedBody,
+      `--${boundary}`,
+      `Content-Type: application/pdf; name=\"${asciiFilename}\"`,
+      "Content-Transfer-Encoding: base64",
+      `Content-Disposition: attachment; filename=\"${asciiFilename}\"; filename*=UTF-8''${encodedFilename}`,
+      "",
+      encodedAttachment,
+      `--${boundary}--`,
+      "",
+    ].join("\r\n");
+    return Buffer.from(message, "utf8").toString("base64url");
   }
 }

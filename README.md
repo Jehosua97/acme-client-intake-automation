@@ -30,8 +30,9 @@ The solution turns that process into a persistent, auditable workflow while pres
 - Every response and conversation position is persisted, allowing interruption and recovery at any moment.
 - Customers can use `SALTAR`, `ALTO`/`PAUSA`/`PAUSAR`/`DETENTE`/`PARA`, `CONTINUAR`, `RESUMEN`, and `PENDIENTES`.
 - Passport images and PDF files are placed in a dedicated Google Drive folder for each customer.
-- Passport fields are flagged for manual staff review instead of asking the customer to transcribe information already visible in the document.
-- A local dashboard exposes case status, completion, answers, notes, custom fields, and Drive links.
+- The complete applicant name is collected immediately after the passport so every row is identifiable in the dashboard; the remaining passport fields are flagged for manual staff review.
+- A compact local dashboard exposes case status, completion, answers, notes, custom fields, and Drive links.
+- Staff can download a client-safe PDF summary or send the same PDF to the confirmed customer email through Gmail for validation.
 
 This phase intentionally excludes health, criminal, political, government, organizational, and military questions. It does not use OCR or generative AI.
 
@@ -48,13 +49,14 @@ flowchart LR
     Q -->|OAuth 2.0| GD[Google Drive]
     DB <--> API[Fastify local API]
     API <--> UI[Operations dashboard]
+    API -->|gmail.send| GM[Gmail API]
     DB --> BK[Consistent local backups]
 ```
 
 The architecture is deliberately hybrid:
 
 - **Local control plane:** customer records, workflow state, audit events, sessions, and the dashboard remain on the ACME workstation.
-- **Cloud document plane:** customer files are organized in Google Drive using narrowly scoped OAuth access.
+- **Cloud integration plane:** customer files are organized in Google Drive and validation PDFs can be sent through Gmail using separate, narrowly scoped OAuth permissions.
 - **No container dependency:** the MVP runs directly on Windows with Node.js.
 - **No database server:** SQLite provides transactions and safe concurrent access while remaining a single portable file.
 
@@ -71,6 +73,7 @@ Detailed design: [architecture](docs/architecture.md) and [engineering decisions
 - Persistent WhatsApp `LocalAuth` session.
 - Loopback-only dashboard binding; the application rejects public network binding.
 - OAuth request logging disabled so authorization codes do not appear in console output.
+- Client PDFs are generated in memory and exclude internal notes before download or email delivery.
 - Application data, credentials, sessions, databases, and build output excluded from Git.
 - Automated type checking, tests, compilation, dependency auditing, and HTTP smoke testing.
 
@@ -83,6 +86,8 @@ Detailed design: [architecture](docs/architecture.md) and [engineering decisions
 | Persistence | Built-in `node:sqlite` |
 | Messaging | `whatsapp-web.js` + Puppeteer |
 | Cloud storage | Google Drive API + OAuth 2.0 |
+| Transactional email | Gmail API with `gmail.send` only |
+| PDF reports | PDFKit, generated in memory |
 | Validation | Zod + domain validators |
 | Dashboard | Semantic HTML, CSS, and browser JavaScript |
 | Quality gates | Node test runner, TypeScript, npm audit, smoke test |
@@ -109,7 +114,7 @@ docs/                      Architecture and engineering decisions
 - Node.js 24 LTS.
 - Google Chrome or Microsoft Edge.
 - A dedicated WhatsApp account is recommended.
-- A Google Cloud project with Google Drive API enabled.
+- A Google Cloud project with Google Drive API and Gmail API enabled.
 
 ### 1. Install and create local configuration
 
@@ -134,6 +139,15 @@ ORGANIZATION_NAME=ACME
 
 The full callback belongs under **Authorized redirect URIs**. If a JavaScript origin is configured, it contains only `http://127.0.0.1:3188`.
 
+Enable both **Google Drive API** and **Gmail API** in the API Library. In the OAuth consent screen's **Data access** section, add:
+
+```text
+https://www.googleapis.com/auth/drive.file
+https://www.googleapis.com/auth/gmail.send
+```
+
+For a local app in testing, keep the Google account that owns the Drive/Gmail mailbox in the test-user list. Existing Drive-only installations must authorize Google once more from the panel before the first email is sent.
+
 ### 3. Start the application
 
 Double-click `INICIAR_MVP.cmd` or run:
@@ -142,7 +156,7 @@ Double-click `INICIAR_MVP.cmd` or run:
 npm.cmd run dev
 ```
 
-Open `http://127.0.0.1:<PORT>`, authorize Google Drive, and scan the WhatsApp QR code.
+Open `http://127.0.0.1:<PORT>`, authorize Google Drive and Gmail Send, and scan the WhatsApp QR code.
 
 ### 4. Install automatic Windows startup
 
@@ -176,8 +190,9 @@ Supervisor and application logs are stored in `.data/logs/`.
 3. The bot begins immediately because ACME already holds the signed authorization.
 4. The state engine asks only the next applicable question.
 5. A passport photo or PDF is queued and uploaded to the customer's Drive folder.
-6. Staff complete passport-derived fields manually from the dashboard.
-7. The dashboard tracks completion and highlights cases requiring review.
+6. The bot asks for the applicant's complete name, which becomes the dashboard row name.
+7. Staff complete passport-derived fields manually from the dashboard.
+8. The dashboard can download the client-safe PDF or email it to the confirmed customer address for validation.
 
 Sending `INICIAR BOT` again does not reset an active case.
 

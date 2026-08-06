@@ -45,9 +45,9 @@ const field = (
 
 const core: FieldDefinition[] = [
   field("workflow.passport_uploaded", "Inicio", "Pasaporte recibido", "📘 *Comencemos con tu pasaporte*\n\nEnvíame una foto clara o un PDF de la página donde aparecen tus datos.\n\nSi no lo tienes en este momento, escribe *SALTAR* y quedará pendiente.", "text", { forms: ["INTERNAL"] }),
+  field("identity.full_name", "Datos personales", "Nombre completo", "👤 *Nombre del solicitante*\n\n¿Cuál es tu nombre completo, incluyendo todos tus nombres y apellidos, tal como aparece en tu pasaporte?", "text", { forms: ["IMM5257", "IMM5707"] }),
   field("application.uci", "Inicio", "UCI", "Si alguna vez tuviste un número UCI de Canadá, escríbelo. Si no lo tienes o no lo conoces, escribe SALTAR.", "text", { required: false }),
   field("application.visa_type", "Inicio", "Tipo de visa", "¿El trámite es para una visa de visitante (turista) o una visa de tránsito?"),
-  field("identity.full_name", "Datos personales", "Nombre completo", "¿Cuál es tu nombre completo, incluyendo todos tus nombres y apellidos, tal como aparece en tu pasaporte?", "text", { forms: ["IMM5257", "IMM5707"] }),
   field("identity.birth_date", "Datos personales", "Fecha de nacimiento", "¿Cuál es tu fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5257", "IMM5707"] }),
   field("identity.birth_city", "Datos personales", "Ciudad de nacimiento", "¿En qué ciudad o pueblo naciste?"),
   field("identity.birth_country", "Datos personales", "País de nacimiento", "¿En qué país o territorio naciste?", "text", { forms: ["IMM5257", "IMM5707"] }),

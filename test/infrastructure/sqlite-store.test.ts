@@ -18,6 +18,7 @@ describe("SQLiteStore", () => {
       const started = startIntake(caseRecord);
       store.saveCase(started.caseRecord);
       store.setStaffAnswer(caseRecord.id, "identity.full_name", "Ana Pérez");
+      assert.equal(store.listClients()[0]?.displayName, "Ana Pérez");
       const applicantAddress = "Calle Principal 10, Colonia Centro, Municipio de Veracruz, Veracruz, C.P. 91700";
       store.setStaffAnswer(caseRecord.id, "contact.residential_address", applicantAddress);
       store.setStaffAnswer(caseRecord.id, "contact.mailing_address", "MISMA");

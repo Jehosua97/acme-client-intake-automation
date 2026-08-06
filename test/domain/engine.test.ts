@@ -66,13 +66,15 @@ describe("conversation engine", () => {
   it("does not immediately repeat a skipped question", () => {
     const caseRecord = activeCase();
     handleClientText(caseRecord, "SALTAR"); // pasaporte pendiente
+    assert.equal(caseRecord.currentFieldId, "identity.full_name");
+    handleClientText(caseRecord, "Ana María Pérez López");
     handleClientText(caseRecord, "SALTAR"); // UCI opcional
     handleClientText(caseRecord, "Visa de visitante");
-    assert.equal(caseRecord.currentFieldId, "identity.full_name");
-    const result = handleClientText(caseRecord, "SALTAR");
-    assert.equal(caseRecord.answers["identity.full_name"]?.status, "PENDING");
     assert.equal(caseRecord.currentFieldId, "identity.birth_date");
-    assert.doesNotMatch(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /nombre completo/);
+    const result = handleClientText(caseRecord, "SALTAR");
+    assert.equal(caseRecord.answers["identity.birth_date"]?.status, "PENDING");
+    assert.equal(caseRecord.currentFieldId, "identity.birth_city");
+    assert.doesNotMatch(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /fecha de nacimiento/i);
   });
 
   it("uses one compact confirmation for passport proposals", () => {
@@ -89,24 +91,28 @@ describe("conversation engine", () => {
     assert.notEqual(caseRecord.currentFieldId, "identity.full_name");
   });
 
-  it("leaves passport values for staff review without asking the client again", () => {
+  it("asks for the complete name immediately after the passport and leaves other passport values for staff review", () => {
     const caseRecord = activeCase();
     const result = handlePassportDocument(caseRecord, "drive-file-1", []);
-    assert.equal(caseRecord.answers["identity.full_name"]?.status, "PENDING");
-    assert.equal(caseRecord.answers["identity.full_name"]?.source, "DOCUMENT");
-    assert.notEqual(caseRecord.currentFieldId, "identity.full_name");
+    assert.equal(caseRecord.answers["identity.full_name"], undefined);
+    assert.equal(caseRecord.answers["identity.birth_date"]?.status, "PENDING");
+    assert.equal(caseRecord.answers["identity.birth_date"]?.source, "DOCUMENT");
+    assert.equal(caseRecord.currentFieldId, "identity.full_name");
+    assert.match(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /nombre completo/i);
     assert.ok(result.outgoing.length > 0);
   });
 
-  it("never reopens passport fields through CONTINUAR", () => {
+  it("never reopens passport facts through CONTINUAR after collecting the name", () => {
     const caseRecord = activeCase();
     handlePassportDocument(caseRecord, "drive-file-1", []);
+    handleClientText(caseRecord, "Ana María Pérez López");
     caseRecord.status = "WAITING_FOR_CLIENT";
     caseRecord.currentFieldId = null;
     const result = handleClientText(caseRecord, "CONTINUAR");
-    assert.equal(caseRecord.answers["identity.full_name"]?.status, "PENDING");
-    assert.notEqual(caseRecord.currentFieldId, "identity.full_name");
-    assert.doesNotMatch(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /apellidos completos/i);
+    assert.equal(caseRecord.answers["identity.birth_date"]?.status, "PENDING");
+    assert.equal(caseRecord.answers["identity.full_name"]?.value, "Ana María Pérez López");
+    assert.notEqual(caseRecord.currentFieldId, "identity.birth_date");
+    assert.doesNotMatch(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /fecha de nacimiento/i);
   });
 
   it("removes partner questions when the client has no partner", () => {

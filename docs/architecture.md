@@ -8,7 +8,7 @@ Dueño escribe INICIAR BOT en un chat individual
                          ▼
                whatsapp-web.js
                          │
-              consentimiento del cliente
+                 motor de estados
                          │
              ┌───────────┴───────────┐
              ▼                       ▼
@@ -24,8 +24,12 @@ Dueño escribe INICIAR BOT en un chat individual
              ┌───────────┴───────────┐
              ▼                       ▼
         panel local          Google Drive API
-                                     │
-                              carpeta del cliente
+             │                       │
+             ▼                carpeta del cliente
+     PDF local en memoria
+             │
+             ▼
+         Gmail API
 ```
 
 ## Componentes
@@ -33,7 +37,8 @@ Dueño escribe INICIAR BOT en un chat individual
 - `src/domain`: catálogo de preguntas, validación, campos condicionales, progreso, pausa y reanudación.
 - `src/infrastructure/sqlite-store.ts`: persistencia transaccional, historial, idempotencia y cola de documentos.
 - `src/infrastructure/whatsapp-local.ts`: sesión local, regla de activación, exclusión de grupos, recepción y envío.
-- `src/infrastructure/google-drive.ts`: OAuth, carpeta raíz, carpeta por cliente y carga de documentos.
+- `src/infrastructure/google-drive.ts`: OAuth, carpeta raíz, carga de documentos y envío por Gmail.
+- `src/infrastructure/client-pdf.ts`: resumen PDF compacto generado completamente en memoria.
 - `src/infrastructure/encrypted-token-store.ts`: cifrado autenticado del token de Google.
 - `src/server.ts`: API local y servidor del panel.
 - `public`: interfaz de expedientes.
@@ -70,7 +75,7 @@ Se aceptan `application/pdf`, `image/jpeg`, `image/png` e `image/webp`, con un l
 - El comando de activación solo se procesa si `fromMe` es verdadero y el chat no es grupo.
 - Los mensajes de estado, difusión y grupos son ignorados.
 - El identificador de cada mensaje se almacena para impedir procesamiento duplicado.
-- Después del pasaporte, los campos visibles en ese documento se marcan pendientes de revisión humana y el bot avanza a preguntas distintas.
+- Después del pasaporte se pide el nombre completo para identificar el expediente; los demás campos visibles en ese documento quedan pendientes de revisión humana.
 - El estado y la pregunta actual se guardan después de cada turno.
 
 ## Seguridad local
@@ -80,7 +85,9 @@ Se aceptan `application/pdf`, `image/jpeg`, `image/png` e `image/webp`, con un l
 - SQLite usa WAL, claves foráneas y `busy_timeout`.
 - El token de Google se cifra con AES-256-GCM y una clave que vive en `.env`.
 - La sesión de WhatsApp y la base quedan excluidas de control de versiones.
-- El permiso OAuth es `drive.file`, limitado a archivos y carpetas creados o abiertos por esta aplicación.
+- Drive usa `drive.file`, limitado a archivos y carpetas creados o abiertos por esta aplicación.
+- El correo usa únicamente `gmail.send`; no se solicitan permisos para leer, modificar ni eliminar correos.
+- El PDF se crea en memoria y no contiene las notas internas del expediente.
 
 ## Respaldo y recuperación
 

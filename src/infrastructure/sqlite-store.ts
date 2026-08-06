@@ -219,8 +219,12 @@ export class SQLiteStore {
 
   saveCase(caseRecord: CaseRecord): void {
     this.transaction(() => {
-      this.db.prepare(`UPDATE clients SET status=?,current_field_id=?,consent_version=?,invited_at=?,consented_at=?,updated_at=? WHERE id=?`).run(
-        caseRecord.status, caseRecord.currentFieldId, caseRecord.consentVersion, caseRecord.invitedAt, caseRecord.consentedAt, iso(), caseRecord.id,
+      const confirmedName = caseRecord.answers["identity.full_name"];
+      const displayName = confirmedName?.status === "CONFIRMED" && typeof confirmedName.value === "string" && confirmedName.value.trim()
+        ? confirmedName.value.trim()
+        : null;
+      this.db.prepare(`UPDATE clients SET display_name=COALESCE(?,display_name),status=?,current_field_id=?,consent_version=?,invited_at=?,consented_at=?,updated_at=? WHERE id=?`).run(
+        displayName, caseRecord.status, caseRecord.currentFieldId, caseRecord.consentVersion, caseRecord.invitedAt, caseRecord.consentedAt, iso(), caseRecord.id,
       );
       const known = new Map((this.db.prepare("SELECT field_id,value_json,status,source,confidence FROM answers WHERE client_id=?").all(caseRecord.id) as Row[])
         .map((row) => [String(row.field_id), row]));

@@ -57,10 +57,26 @@
         <div class="client-avatar" id="detailAvatar"></div>
         <div class="dialog-title"><input id="detailName" maxlength="120"><span id="detailPhone"></span></div>
         <select id="detailStatus"></select>
+        <div class="dialog-actions">
+          <a id="downloadPdf" class="secondary-button" href="#" download>Descargar PDF</a>
+          <button id="emailPdf" class="primary-button" type="button">Enviar PDF a cliente por correo</button>
+        </div>
       </header>
-      <div class="detail-progress"><div><span>Progreso del expediente</span><b id="detailPercent">0%</b></div><div class="progress-track"><i id="detailProgressBar"></i></div></div>
+      <div class="detail-overview">
+        <div class="detail-progress"><div><span>Progreso del expediente</span><b id="detailPercent">0%</b></div><div class="progress-track"><i id="detailProgressBar"></i></div></div>
+        <div class="quick-fact"><span>Correo</span><b id="quickEmail">Sin dato</b></div>
+        <div class="quick-fact"><span>Celular</span><b id="quickPhone">Sin dato</b></div>
+        <div class="quick-fact address"><span>Domicilio</span><b id="quickAddress">Sin dato</b></div>
+      </div>
       <nav class="tabs"><button class="active" data-tab="information">Información</button><button data-tab="documents">Documentos <span id="documentBadge">0</span></button><button data-tab="extras">Notas y adicionales</button></nav>
-      <section id="informationTab" class="tab-content"></section>
+      <section id="informationTab" class="tab-content">
+        <div class="information-tools">
+          <label class="detail-search"><span>⌕</span><input id="fieldSearch" type="search" placeholder="Buscar cualquier dato del expediente"></label>
+          <button id="pendingOnly" class="secondary-button" type="button">Mostrar sólo pendientes</button>
+          <span id="visibleFieldCount"></span>
+        </div>
+        <div id="informationSections" class="information-sections"></div>
+      </section>
       <section id="documentsTab" class="tab-content" hidden></section>
       <section id="extrasTab" class="tab-content" hidden>
         <div class="notes-card"><label for="detailNotes">Notas internas</label><textarea id="detailNotes" rows="6" placeholder="Observaciones visibles solo para la empresa"></textarea><button id="saveNotes" class="primary-button">Guardar notas</button></div>

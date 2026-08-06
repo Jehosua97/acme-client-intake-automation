@@ -39,7 +39,9 @@ try {
   if (!status) throw new Error(`El servidor no respondió a tiempo.\n${stderr}`);
   const page = await fetch(`http://127.0.0.1:${port}/`);
   const html = await page.text();
-  if (!page.ok || !html.includes("Expedientes de clientes")) throw new Error("El panel no devolvió su página principal");
+  if (!page.ok || !html.includes("Expedientes de clientes") || !html.includes("Descargar PDF") || !html.includes("Enviar PDF a cliente por correo")) {
+    throw new Error("El panel no devolvió la interfaz completa de expedientes y PDF");
+  }
   console.log(JSON.stringify({ httpStatus: page.status, panel: true, database: status.databasePath, driveConfigured: status.googleDrive.configured }));
 } finally {
   child.kill("SIGTERM");

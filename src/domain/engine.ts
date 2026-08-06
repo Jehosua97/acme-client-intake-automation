@@ -41,7 +41,6 @@ const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]>
   ["education.country", "México"],
 ];
 const PASSPORT_MANUAL_REVIEW_FIELDS = [
-  "identity.full_name",
   "identity.birth_date",
   "identity.birth_city",
   "identity.birth_country",
@@ -284,9 +283,9 @@ export function handlePassportDocument(
 ): EngineResult {
   const defaultedFields = applyMexicoProfileDefaults(caseRecord);
   setAnswer(caseRecord, "workflow.passport_uploaded", documentId, "CONFIRMED", "DOCUMENT", 100);
-  // Phase one deliberately has no OCR/AI. These values are visible as pending in
-  // the staff panel, and are skipped in the chat so the client is not asked to
-  // transcribe information that is already present in the passport.
+  // Phase one deliberately has no OCR/AI. Passport facts remain pending for
+  // staff review, but the client's complete name is requested in chat so the
+  // dashboard can identify the case immediately.
   for (const fieldId of PASSPORT_MANUAL_REVIEW_FIELDS) {
     if (!caseRecord.answers[fieldId]) setAnswer(caseRecord, fieldId, null, "PENDING", "DOCUMENT");
   }
