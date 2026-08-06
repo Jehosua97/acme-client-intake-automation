@@ -144,6 +144,31 @@ npm.cmd run dev
 
 Open `http://127.0.0.1:<PORT>`, authorize Google Drive, and scan the WhatsApp QR code.
 
+### 4. Install automatic Windows startup
+
+After the first successful interactive connection, install the supervised production task:
+
+```powershell
+npm.cmd run windows:install
+```
+
+The task starts at Windows sign-in under the current user, without storing the Windows password. Its supervisor:
+
+- builds and launches the production application with a hidden window;
+- prevents duplicate bot instances;
+- restarts Node after a crash;
+- probes the local API and WhatsApp runtime every 15 seconds;
+- restarts the process after three consecutive unhealthy checks;
+- relies on SQLite transactions, the persisted conversation cursor, the document queue, LocalAuth, and the encrypted Drive token to resume safely.
+
+Check it at any time with:
+
+```powershell
+npm.cmd run windows:status
+```
+
+Supervisor and application logs are stored in `.data/logs/`.
+
 ## Operational workflow
 
 1. The operator opens an individual WhatsApp conversation.
@@ -191,6 +216,7 @@ Runtime data is written under `.data/`:
   whatsapp-session/        Persistent linked-device session
   google-token.enc         Encrypted Google OAuth credentials
   backups/                 On-demand SQLite backups
+  logs/                    Windows supervisor and production logs
 ```
 
 The live SQLite database should not be synchronized directly by OneDrive or another file-sync agent. Back up closed or application-generated copies to a separate encrypted location.
@@ -199,7 +225,7 @@ The live SQLite database should not be synchronized directly by OneDrive or anot
 
 The local architecture remains appropriate while one operator uses one workstation. A future platform phase would be triggered by remote access, multiple staff members, high availability, or centralized operations. That phase could introduce:
 
-- Windows automatic startup and scheduled encrypted backups.
+- Scheduled encrypted off-device backups.
 - Authentication, MFA, and role-based access control.
 - Centralized metrics, structured logs, and alerting.
 - Managed PostgreSQL and object storage for multi-user access.

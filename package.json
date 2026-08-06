@@ -10,6 +10,8 @@
     "build": "npm run clean && tsc -p tsconfig.json",
     "smoke": "npm run build && node scripts/smoke.mjs",
     "start": "node dist/src/server.js",
+    "windows:install": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/install-windows-startup.ps1",
+    "windows:status": "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File scripts/windows-bot-status.ps1",
     "test": "tsx --test test/**/*.test.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },
