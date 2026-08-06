@@ -15,6 +15,8 @@ const schema = z.object({
   WHATSAPP_BROWSER_VISIBLE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   WHATSAPP_SESSION_ID: z.string().regex(/^[a-zA-Z0-9_-]+$/).default("acme-client-intake"),
   WHATSAPP_DEVICE_NAME: z.string().trim().min(1).max(100).default("MultiServicios Client Intake"),
+  BACKUP_ADMIN_PHONE: z.string().trim().refine((value) => value === "" || /^\+?\d{7,15}$/.test(value), "debe contener un teléfono válido").default(""),
+  FULL_BACKUP_OUTPUT_DIR: z.string().trim().default(""),
   CHROME_EXECUTABLE_PATH: z.string().default(""),
   MAX_DOCUMENT_MB: z.coerce.number().min(1).max(100).default(20),
 });
@@ -24,6 +26,7 @@ export type Config = z.infer<typeof schema> & {
   databasePath: string;
   whatsappSessionPath: string;
   googleTokenPath: string;
+  fullBackupOutputDir: string;
 };
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Config {
@@ -32,11 +35,13 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): Config
     throw new Error(`Configuración inválida: ${parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; ")}`);
   }
   const dataDir = path.resolve(parsed.data.DATA_DIR);
+  const fallbackDesktop = path.join(environment.USERPROFILE || process.cwd(), "Desktop");
   return {
     ...parsed.data,
     dataDir,
     databasePath: path.join(dataDir, "bot.sqlite"),
     whatsappSessionPath: path.join(dataDir, "whatsapp-session"),
     googleTokenPath: path.join(dataDir, "google-token.enc"),
+    fullBackupOutputDir: path.resolve(parsed.data.FULL_BACKUP_OUTPUT_DIR || fallbackDesktop),
   };
 }

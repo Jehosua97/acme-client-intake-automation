@@ -24,8 +24,8 @@ async function loadSystem(){
     state.system=await api("/api/system/status");
     const organization=state.system.organizationName||"MultiServicios";$("#organizationName").textContent=organization;document.title=`${organization} · Control de expedientes`;
     const wa=$("#whatsappStatus"),drive=$("#driveStatus");
-    wa.className="connection "+(state.system.whatsapp.state==="READY"?"ready":state.system.whatsapp.state==="QR"?"warn":"");
-    wa.querySelector("b").textContent={READY:"Conectado",QR:"Escanear QR",AUTHENTICATED:"Autenticando",STARTING:"Iniciando",DISCONNECTED:"Desconectado",ERROR:"Error"}[state.system.whatsapp.state]||state.system.whatsapp.state;
+    wa.className="connection "+(state.system.whatsapp.state==="READY"?"ready":["QR","BACKUP"].includes(state.system.whatsapp.state)?"warn":"");
+    wa.querySelector("b").textContent={READY:"Conectado",QR:"Escanear QR",AUTHENTICATED:"Autenticando",STARTING:"Iniciando",BACKUP:"Respaldando",DISCONNECTED:"Desconectado",ERROR:"Error"}[state.system.whatsapp.state]||state.system.whatsapp.state;
     const ds=state.system.googleDrive;
     drive.className="connection "+(ds.connected?"ready":"warn");
     drive.querySelector("b").textContent=ds.connected?"Conectado":ds.configured?"Conectar":"Configurar";

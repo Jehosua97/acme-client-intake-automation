@@ -188,7 +188,7 @@ Supervisor and application logs are stored in `.data/logs/`.
 
 1. The operator opens an individual WhatsApp conversation.
 2. The operator sends `INICIAR BOT` from the linked account.
-3. The bot begins immediately because ACME already holds the signed authorization.
+3. The bot begins immediately because MultiServicios already holds the signed authorization.
 4. The state engine asks only the next applicable question.
 5. A passport photo or PDF is queued and uploaded to the customer's Drive folder.
 6. The bot asks for the applicant's complete name, which becomes the dashboard row name.
@@ -197,6 +197,17 @@ Supervisor and application logs are stored in `.data/logs/`.
 9. The bot asks for final corrections, confirms the destination email, and closes automated processing for that case.
 
 Sending `INICIAR BOT` again does not reset an active case.
+
+### Full system backup from WhatsApp
+
+Configure the only phone authorized to request a backup and the Windows output folder in `.env`:
+
+```text
+BACKUP_ADMIN_PHONE=+14378781645
+FULL_BACKUP_OUTPUT_DIR=C:\Users\YourUser\OneDrive\Desktop
+```
+
+From that phone, send `HACER RESPALDO BACKUP` in an individual chat with the bot. Group commands and commands from every other phone are ignored. The operation runs in the background and sends a WhatsApp confirmation when the complete project ZIP has been saved. The WhatsApp browser reconnects automatically after releasing its active session files for compression. A consistent SQLite snapshot is created immediately before compression and included in the archive.
 
 ## Customer commands
 

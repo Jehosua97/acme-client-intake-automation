@@ -6,10 +6,18 @@ import type { Config } from "../config.js";
 import { handleClientText, handlePassportDocument, startIntake } from "../domain/engine.js";
 import type { OutgoingMessage } from "../domain/types.js";
 import type { GoogleDriveService } from "./google-drive.js";
+import type { FullBackupService } from "./full-backup.js";
 import type { PendingDocument, SQLiteStore } from "./sqlite-store.js";
 
 const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+const FULL_BACKUP_COMMAND = "HACER RESPALDO BACKUP";
 const { Client, LocalAuth } = WhatsAppWeb;
+
+const phoneDigits = (value: string) => value.replace(/\D/g, "");
+
+export function isAuthorizedBackupPhone(resolvedPhone: string, configuredPhone: string): boolean {
+  return Boolean(configuredPhone) && phoneDigits(resolvedPhone) === phoneDigits(configuredPhone);
+}
 
 function serializedText(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) return value;
@@ -45,7 +53,7 @@ interface ChatIdentity {
 }
 
 export interface WhatsAppRuntimeStatus {
-  state: "STARTING" | "QR" | "AUTHENTICATED" | "READY" | "DISCONNECTED" | "ERROR";
+  state: "STARTING" | "QR" | "AUTHENTICATED" | "READY" | "BACKUP" | "DISCONNECTED" | "ERROR";
   qrDataUrl: string | null;
   account: string | null;
   lastError: string | null;
@@ -56,8 +64,14 @@ export class WhatsAppLocalService {
   private runtime: WhatsAppRuntimeStatus = { state: "STARTING", qrDataUrl: null, account: null, lastError: null };
   private workerTimer: NodeJS.Timeout | null = null;
   private workerBusy = false;
+  private backupInProgress = false;
 
-  constructor(private readonly config: Config, private readonly store: SQLiteStore, private readonly drive: GoogleDriveService) {
+  constructor(
+    private readonly config: Config,
+    private readonly store: SQLiteStore,
+    private readonly drive: GoogleDriveService,
+    private readonly fullBackup: FullBackupService,
+  ) {
     const executablePath = config.CHROME_EXECUTABLE_PATH || this.findBrowser();
     this.client = new Client({
       authStrategy: new LocalAuth({ dataPath: config.whatsappSessionPath, clientId: config.WHATSAPP_SESSION_ID }),
@@ -90,13 +104,20 @@ export class WhatsAppLocalService {
     this.client.on("qr", async (qr) => {
       this.runtime = { state: "QR", qrDataUrl: await QRCode.toDataURL(qr, { width: 320, margin: 1 }), account: null, lastError: null };
     });
-    this.client.on("authenticated", () => { this.runtime = { ...this.runtime, state: "AUTHENTICATED", qrDataUrl: null, lastError: null }; });
+    this.client.on("authenticated", () => {
+      this.runtime = { ...this.runtime, state: this.backupInProgress ? "BACKUP" : "AUTHENTICATED", qrDataUrl: null, lastError: null };
+    });
     this.client.on("ready", () => {
+      this.backupInProgress = false;
       this.runtime = { state: "READY", qrDataUrl: null, account: this.client.info?.wid?._serialized ?? null, lastError: null };
       void this.recoverRecentStartCommands();
     });
     this.client.on("auth_failure", (message) => { this.runtime = { ...this.runtime, state: "ERROR", lastError: message }; });
-    this.client.on("disconnected", (reason) => { this.runtime = { ...this.runtime, state: "DISCONNECTED", lastError: String(reason) }; });
+    this.client.on("disconnected", (reason) => {
+      this.runtime = this.backupInProgress
+        ? { ...this.runtime, state: "BACKUP", lastError: null }
+        : { ...this.runtime, state: "DISCONNECTED", lastError: String(reason) };
+    });
     this.client.on("message_create", (message) => {
       if (message.fromMe) void this.handleOwnerMessage(message).catch((error) => this.setError(error, false));
     });
@@ -187,6 +208,17 @@ export class WhatsAppLocalService {
       }
       if (sourceChatId.endsWith("@g.us") || sourceChatId.endsWith("@broadcast") || sourceChatId.endsWith("@newsletter")) {
         this.store.markProcessed(messageId);
+        return;
+      }
+      if (message.body.trim().toLocaleUpperCase("es") === FULL_BACKUP_COMMAND) {
+        const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
+        const authorized = isAuthorizedBackupPhone(identity.phone, this.config.BACKUP_ADMIN_PHONE);
+        this.store.markProcessed(messageId);
+        if (!authorized) {
+          this.store.audit(null, "FULL_BACKUP_COMMAND_REJECTED", { sourceChatId, resolvedPhone: identity.phone || null });
+          return;
+        }
+        await this.startFullBackup(sourceChatId, messageId);
         return;
       }
       let caseRecord = this.store.getCaseByChatId(sourceChatId);
@@ -294,6 +326,66 @@ export class WhatsAppLocalService {
     for (const message of outgoing) {
       if (message.type === "text") await this.client.sendMessage(chatId, message.body);
     }
+  }
+
+  private async startFullBackup(chatId: string, messageId: string): Promise<void> {
+    if (this.backupInProgress || this.fullBackup.isRunning()) {
+      await this.client.sendMessage(chatId, "Ya hay un respaldo completo en proceso. Te avisaré por aquí cuando termine.");
+      return;
+    }
+    await this.client.sendMessage(chatId, "🗜️ Inicié el respaldo completo del sistema. La carpeta ocupa aproximadamente 1 GB, así que puede tardar varios minutos. El bot se desconectará temporalmente para incluir todos sus archivos y volverá a conectarse por sí solo. Te avisaré cuando termine.");
+    this.store.audit(null, "FULL_BACKUP_STARTED", { chatId, messageId, outputDirectory: this.config.fullBackupOutputDir });
+    this.backupInProgress = true;
+    this.runtime = { ...this.runtime, state: "BACKUP", lastError: null };
+    void this.executeFullBackup(chatId).catch((error) => {
+      this.backupInProgress = false;
+      this.setError(error);
+      this.store.audit(null, "FULL_BACKUP_COORDINATION_FAILED", { error: error instanceof Error ? error.message : String(error) });
+    });
+  }
+
+  private async executeFullBackup(chatId: string): Promise<void> {
+    let result: Awaited<ReturnType<FullBackupService["create"]>> | null = null;
+    let backupError: unknown = null;
+    try {
+      // Chromium holds a few session files exclusively. Closing only the
+      // WhatsApp browser releases them so the ZIP can contain the whole folder.
+      await this.client.destroy();
+      result = await this.fullBackup.create();
+    } catch (error) {
+      backupError = error;
+    }
+
+    try {
+      await this.reconnectAfterFullBackup();
+    } catch (reconnectError) {
+      const backupDetail = backupError instanceof Error ? backupError.message : backupError ? String(backupError) : null;
+      const reconnectDetail = reconnectError instanceof Error ? reconnectError.message : String(reconnectError);
+      throw new Error([backupDetail, `No fue posible reconectar WhatsApp: ${reconnectDetail}`].filter(Boolean).join(" | "));
+    }
+
+    if (!result) {
+      const detail = backupError instanceof Error ? backupError.message : String(backupError);
+      this.store.audit(null, "FULL_BACKUP_FAILED", { error: detail });
+      await this.client.sendMessage(chatId, `❌ No pude completar el respaldo.\n\nDetalle: ${detail}`);
+      return;
+    }
+
+    const size = result.bytes >= 1024 ** 3
+      ? `${(result.bytes / 1024 ** 3).toFixed(2)} GB`
+      : `${(result.bytes / 1024 ** 2).toFixed(1)} MB`;
+    this.store.audit(null, "FULL_BACKUP_COMPLETED", { path: result.path, bytes: result.bytes, durationMs: result.durationMs });
+    await this.client.sendMessage(chatId, `✅ Respaldo terminado correctamente.\n\n*Archivo:* ${result.filename}\n*Tamaño:* ${size}\n*Guardado en:* ${result.path}`);
+  }
+
+  private async reconnectAfterFullBackup(): Promise<void> {
+    await this.client.initialize();
+    const deadline = Date.now() + 120_000;
+    while (this.runtime.state !== "READY" && Date.now() < deadline) {
+      if (this.runtime.state === "ERROR") throw new Error(this.runtime.lastError || "falló la autenticación");
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (this.runtime.state !== "READY") throw new Error("WhatsApp no quedó listo después de 2 minutos");
   }
 
   private async recoverRecentStartCommands(): Promise<void> {

@@ -12,6 +12,7 @@ import { clientPdfFilename, generateClientPdf, type ClientPdfData } from "./infr
 import { SQLiteStore, type StoredDocument } from "./infrastructure/sqlite-store.js";
 import { GoogleDriveService } from "./infrastructure/google-drive.js";
 import { WhatsAppLocalService } from "./infrastructure/whatsapp-local.js";
+import { FullBackupService } from "./infrastructure/full-backup.js";
 
 const config = loadConfig();
 if (!["127.0.0.1", "localhost", "::1"].includes(config.HOST)) {
@@ -22,7 +23,8 @@ await mkdir(config.dataDir, { recursive: true });
 const store = new SQLiteStore(config.databasePath);
 const drive = new GoogleDriveService(config, store);
 await drive.initialize();
-const whatsapp = new WhatsAppLocalService(config, store, drive);
+const fullBackup = new FullBackupService(path.resolve("."), config.fullBackupOutputDir, store);
+const whatsapp = new WhatsAppLocalService(config, store, drive, fullBackup);
 const app = Fastify({ logger: true, logController: new LogController({ disableRequestLogging: true }), bodyLimit: 1024 * 1024 });
 
 const STATUS_LABELS: Record<CaseStatus, string> = {
