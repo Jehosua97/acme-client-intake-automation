@@ -18,6 +18,64 @@ function displayMonth(index: number): string {
   return `${String((index % 12) + 1).padStart(2, "0")}/${Math.floor(index / 12)}`;
 }
 
+function currentYearMonth(referenceDate: Date): string {
+  return `${referenceDate.getFullYear()}-${String(referenceDate.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function previousYearMonth(value: string): string | null {
+  const match = value.match(/^(\d{4})-(\d{2})$/);
+  if (!match) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  if (month < 1 || month > 12) return null;
+  return month === 1 ? `${year - 1}-12` : `${year}-${String(month - 1).padStart(2, "0")}`;
+}
+
+export function immediateConsistencyIssue(
+  fieldId: string,
+  value: Answer["value"],
+  answers: Answers,
+  referenceDate = new Date(),
+): string | null {
+  if (typeof value !== "string") return null;
+  if (fieldId === "visit.from") {
+    const until = textValue(answers, "visit.until");
+    if (until && value >= until) return "La fecha de llegada debe ser anterior a la fecha estimada de salida de Canadá.";
+  }
+  if (fieldId === "visit.until") {
+    const from = textValue(answers, "visit.from");
+    if (from && from >= value) return "La fecha estimada de salida debe ser posterior a la fecha de llegada a Canadá.";
+  }
+  const employment = fieldId.match(/^employment\.(\d+)\.from$/);
+  if (employment) {
+    const index = Number(employment[1]);
+    if (index === 1 && value > currentYearMonth(referenceDate)) {
+      return "La actividad actual no puede comenzar en una fecha futura. Usa MM/AAAA.";
+    }
+    if (index > 1) {
+      const newerFrom = textValue(answers, `employment.${index - 1}.from`);
+      if (newerFrom && value >= newerFrom) {
+        return `Esta actividad debe haber comenzado antes de ${newerFrom.slice(5)}/${newerFrom.slice(0, 4)} para mantener el historial en orden.`;
+      }
+    }
+  }
+  return null;
+}
+
+export function derivedEmploymentUntil(
+  fieldId: string,
+  value: Answer["value"],
+  answers: Answers,
+): { fieldId: string; value: string } | null {
+  const match = fieldId.match(/^employment\.(\d+)\.from$/);
+  if (!match || typeof value !== "string") return null;
+  const index = Number(match[1]);
+  if (index === 1) return { fieldId: "employment.1.until", value: "CURRENT" };
+  const newerFrom = textValue(answers, `employment.${index - 1}.from`);
+  const until = newerFrom ? previousYearMonth(newerFrom) : null;
+  return until ? { fieldId: `employment.${index}.until`, value: until } : null;
+}
+
 export function employmentCoverageIssues(answers: Answers, referenceDate = new Date()): string[] {
   const indexes = [...new Set(Object.keys(answers).flatMap((fieldId) => {
     const match = fieldId.match(/^employment\.(\d+)\.(?:from|until)$/);
@@ -60,6 +118,6 @@ export function crossFieldIssues(answers: Answers, referenceDate = new Date()): 
   if (issue && expiry && issue >= expiry) issues.push("El vencimiento del pasaporte debe ser posterior a su emisión.");
   const visitFrom = textValue(answers, "visit.from");
   const visitUntil = textValue(answers, "visit.until");
-  if (visitFrom && visitUntil && visitFrom > visitUntil) issues.push("La salida planeada de Canadá debe ser posterior a la llegada.");
+  if (visitFrom && visitUntil && visitFrom >= visitUntil) issues.push("La salida planeada de Canadá debe ser posterior a la llegada.");
   return [...issues, ...employmentCoverageIssues(answers, referenceDate)];
 }

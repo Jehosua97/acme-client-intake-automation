@@ -135,7 +135,7 @@ export class WhatsAppLocalService {
           await this.sendAll(chatId, result.outgoing);
         } else {
           this.store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status });
-          await this.client.sendMessage(chatId, "Tu expediente ya está iniciado y conserva todo el avance. Puedes escribir CONTINUAR, RESUMEN o PENDIENTES.");
+          await this.client.sendMessage(chatId, "Tu expediente ya está iniciado y conserva todo el avance. El cliente puede responder la pregunta pendiente o pedir un resumen.");
         }
         if (messageId) this.store.markProcessed(messageId);
         this.runtime = { ...this.runtime, lastError: null };

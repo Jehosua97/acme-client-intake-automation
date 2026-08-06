@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { calculateClientProgress, calculateProgress, handleClientText, handlePassportDocument, invite, newCase, startIntake } from "../../src/domain/engine.js";
+import { calculateClientProgress, calculateProgress, handleClientText, handlePassportDocument, invite, newCase, questionFor, startIntake } from "../../src/domain/engine.js";
 import type { Answer, CaseRecord } from "../../src/domain/types.js";
 import { catalogFor, fieldById } from "../../src/domain/catalog.js";
 
@@ -34,9 +34,10 @@ describe("conversation engine", () => {
     assert.match(overview, /5 bloques/);
     assert.doesNotMatch(overview, /familiar falleció/i);
     assert.doesNotMatch(started.outgoing.map((message) => message.type === "text" ? message.body : "").join(" "), /ACEPTO|NO ACEPTO/);
-    assert.match(overview, /ALTO.*PAUSA.*DETENTE.*PARA/);
     assert.match(overview, /varios días/);
-    assert.match(overview, /no haya huecos de tiempo vacíos durante esos 10 años/i);
+    assert.match(overview, /cerrar WhatsApp y regresar cuando quieras/i);
+    assert.match(overview, /cubrir los 10 años sin dejar meses vacíos/i);
+    assert.doesNotMatch(overview, /ALTO|PAUSA|DETENTE|PARA|CONTINUAR/i);
     assert.doesNotMatch(overview, /de antemano cuántos periodos/i);
   });
 
@@ -221,7 +222,7 @@ describe("conversation engine", () => {
     assert.match(fields.find((field) => field.id === "contact.residential_address")?.prompt ?? "", /_Ejemplo ficticio: Avenida de los Pinos 245.*_/);
     for (const fieldId of ["contact.mailing_address", "partner.address", "mother.address", "father.address", "children.1.address"]) {
       const prompt = fields.find((field) => field.id === fieldId)?.prompt ?? "";
-      assert.match(prompt, /escribe \*MISMA\*/, fieldId);
+      assert.match(prompt, /responde \*SÍ\* o escribe \*MISMA\*/, fieldId);
       assert.match(prompt, /Calle Principal 10/, fieldId);
       assert.match(prompt, /escribe la nueva dirección completa/, fieldId);
       assert.doesNotMatch(prompt, /nombre de la calle y número/, fieldId);
@@ -230,8 +231,29 @@ describe("conversation engine", () => {
     assert.doesNotMatch(canadaAddressPrompt, /MISMA|Calle Principal 10/);
 
     caseRecord.currentFieldId = "partner.address";
-    handleClientText(caseRecord, "MISMA");
+    handleClientText(caseRecord, "Sí");
     assert.equal(caseRecord.answers["partner.address"]?.value, applicantAddress);
+
+    caseRecord.currentFieldId = "mother.address";
+    handleClientText(caseRecord, "MISMA");
+    assert.equal(caseRecord.answers["mother.address"]?.value, applicantAddress);
+  });
+
+  it("offers the WhatsApp number naturally and accepts Sí as confirmation", () => {
+    const caseRecord = activeCase();
+    const phoneField = fieldById("contact.phone", caseRecord.answers);
+    assert.ok(phoneField);
+    assert.match(questionFor(caseRecord, phoneField), /Registramos que tu número de WhatsApp es/);
+    assert.match(questionFor(caseRecord, phoneField), /\+5215550000000/);
+
+    caseRecord.currentFieldId = "contact.phone";
+    handleClientText(caseRecord, "Sí");
+    assert.equal(caseRecord.answers["contact.phone"]?.value, "+5215550000000");
+
+    const alternate = activeCase();
+    alternate.currentFieldId = "contact.phone";
+    handleClientText(alternate, "+52 229 123 4567");
+    assert.equal(alternate.answers["contact.phone"]?.value, "+522291234567");
   });
 
   it("collects employment periods incrementally until the dynamic ten-year cutoff", () => {
@@ -239,24 +261,59 @@ describe("conversation engine", () => {
     let fields = catalogFor(caseRecord.answers);
     let ids = new Set(fields.map((field) => field.id));
     assert.equal(ids.has("employment.count"), false);
+    assert.equal(ids.has("employment.1.activity"), true);
     assert.equal(ids.has("employment.1.from"), true);
+    assert.equal(ids.has("employment.1.until"), false);
     assert.equal(ids.has("employment.2.from"), false);
     assert.equal(ids.has("employment.1.country"), false);
-    const intro = fields.find((field) => field.id === "employment.1.from")?.prompt ?? "";
+    assert.ok(fields.findIndex((field) => field.id === "employment.1.activity") < fields.findIndex((field) => field.id === "employment.1.organization"));
+    assert.ok(fields.findIndex((field) => field.id === "employment.1.organization") < fields.findIndex((field) => field.id === "employment.1.from"));
+    const intro = fields.find((field) => field.id === "employment.1.activity")?.prompt ?? "";
     assert.match(intro, /agosto de 2016/);
-    assert.match(intro, /_08\/2016 a 01\/2023/);
-    assert.match(intro, /una por una/);
-    assert.match(intro, /no haya huecos de tiempo vacíos durante esos 10 años/i);
-    assert.doesNotMatch(intro, /calcular cuántos periodos|de antemano/i);
+    assert.match(intro, /trabajo o actividad actual/i);
+    assert.doesNotMatch(intro, /ejemplo|2 periodos|08\/2016 a 01\/2023/i);
 
-    caseRecord.answers["employment.1.from"] = confirmed("employment.1.from", "2023-02");
+    caseRecord.currentFieldId = "employment.1.activity";
+    handleClientText(caseRecord, "Desarrollador de software");
+    caseRecord.currentFieldId = "employment.1.organization";
+    handleClientText(caseRecord, "Empresa actual");
+    caseRecord.currentFieldId = "employment.1.from";
+    handleClientText(caseRecord, "02/2023");
+    assert.equal(caseRecord.answers["employment.1.until"]?.value, "CURRENT");
     fields = catalogFor(caseRecord.answers);
     ids = new Set(fields.map((field) => field.id));
-    assert.equal(ids.has("employment.2.from"), true);
+    assert.equal(ids.has("employment.2.activity"), true);
+    assert.match(fields.find((field) => field.id === "employment.2.activity")?.prompt ?? "", /Antes de .*Desarrollador de software.*Empresa actual/i);
 
-    caseRecord.answers["employment.2.from"] = confirmed("employment.2.from", "2016-08");
+    caseRecord.currentFieldId = "employment.2.activity";
+    handleClientText(caseRecord, "Estudiante");
+    caseRecord.currentFieldId = "employment.2.organization";
+    handleClientText(caseRecord, "Universidad Veracruzana");
+    caseRecord.currentFieldId = "employment.2.from";
+    handleClientText(caseRecord, "08/2016");
+    assert.equal(caseRecord.answers["employment.2.until"]?.value, "2023-01");
     ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
-    assert.equal(ids.has("employment.3.from"), false);
+    assert.equal(ids.has("employment.3.activity"), false);
+  });
+
+  it("rejects employment dates that break the backwards chronology", () => {
+    const caseRecord = activeCase();
+    caseRecord.answers["employment.1.from"] = confirmed("employment.1.from", "2023-02");
+    caseRecord.currentFieldId = "employment.2.from";
+    const result = handleClientText(caseRecord, "03/2023");
+    assert.equal(caseRecord.answers["employment.2.from"], undefined);
+    assert.match(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /debe haber comenzado antes de 02\/2023/i);
+  });
+
+  it("rejects a departure date that is not after arrival in Canada", () => {
+    const caseRecord = activeCase();
+    caseRecord.answers["visit.from"] = confirmed("visit.from", "2027-06-15");
+    caseRecord.currentFieldId = "visit.until";
+    const sameDay = handleClientText(caseRecord, "15/06/2027");
+    assert.equal(caseRecord.answers["visit.until"], undefined);
+    assert.match(sameDay.outgoing[0]?.type === "text" ? sameDay.outgoing[0].body : "", /salida debe ser posterior/i);
+    const valid = handleClientText(caseRecord, "16/06/2027");
+    assert.equal(valid.caseRecord.answers["visit.until"]?.value, "2027-06-16");
   });
 
   it("asks travel history in direct, client-friendly language", () => {
@@ -292,7 +349,7 @@ describe("conversation engine", () => {
     assert.ok(resumed.outgoing.length > 0);
   });
 
-  it("accepts every advertised pause command without losing the current field", () => {
+  it("keeps hidden pause commands working without advertising CONTINUAR", () => {
     for (const command of ["ALTO", "PAUSA", "PAUSAR", "DETENTE", "PARA"]) {
       const caseRecord = activeCase();
       const field = caseRecord.currentFieldId;
@@ -300,10 +357,21 @@ describe("conversation engine", () => {
       assert.equal(paused.caseRecord.status, "PAUSED", command);
       assert.equal(paused.caseRecord.currentFieldId, field, command);
       assert.match(paused.outgoing[0]?.type === "text" ? paused.outgoing[0].body : "", /no se perderá/);
+      assert.doesNotMatch(paused.outgoing[0]?.type === "text" ? paused.outgoing[0].body : "", /CONTINUAR/i);
       handleClientText(caseRecord, "CONTINUAR");
       assert.equal(caseRecord.status, "ACTIVE", command);
       assert.equal(caseRecord.currentFieldId, field, command);
     }
+  });
+
+  it("resumes naturally when the client replies after a hidden pause", () => {
+    const caseRecord = activeCase();
+    handleClientText(caseRecord, "PAUSA");
+    const resumed = handleClientText(caseRecord, "SALTAR");
+    assert.equal(caseRecord.status, "ACTIVE");
+    assert.equal(caseRecord.answers["workflow.passport_uploaded"]?.status, "PENDING");
+    assert.equal(caseRecord.currentFieldId, "identity.full_name");
+    assert.ok(resumed.outgoing.length > 0);
   });
 
   it("counts a skipped passport as a required pending item", () => {

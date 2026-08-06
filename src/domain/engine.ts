@@ -1,7 +1,7 @@
 import { catalogFor, fieldById } from "./catalog.js";
 import type { Answer, CaseRecord, EngineResult, FieldDefinition, OutgoingMessage, Progress } from "./types.js";
 import { validateAnswer } from "./validation.js";
-import { crossFieldIssues } from "./consistency.js";
+import { crossFieldIssues, derivedEmploymentUntil, immediateConsistencyIssue } from "./consistency.js";
 import { resolveAddressInput } from "./address.js";
 import { unknownParentValue } from "./family.js";
 
@@ -21,13 +21,13 @@ Las preguntas se adaptan según tu pareja, hijos y los datos que conozcas de tus
 3️⃣ *Idiomas*
 
 4️⃣ *Estudios y actividades de los últimos 10 años*
-Las actividades se registran una por una. Asegúrate de que no haya huecos de tiempo vacíos durante esos 10 años.
+Empezaremos por tu actividad actual y organizaremos las anteriores hasta cubrir los 10 años sin dejar meses vacíos.
 
 5️⃣ *Viaje a Canadá e historial de viajes*
 
-*Puedes hacerlo en varios días.* Todo tu avance queda guardado después de cada respuesta. Para detener las preguntas escribe *ALTO*, *PAUSA*, *DETENTE* o *PARA*. Cuando quieras regresar, escribe *CONTINUAR* o simplemente responde la pregunta que quedó pendiente.
+*Puedes hacerlo en varios días.* Guardamos tu avance después de cada respuesta, así que puedes cerrar WhatsApp y regresar cuando quieras.
 
-Si te falta algún dato, escribe *SALTAR*.`;
+Si en ese momento te falta algún dato, escribe *SALTAR* y lo dejamos pendiente.`;
 const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]> = [
   ["identity.birth_country", "México"],
   ["identity.citizenship", "México"],
@@ -184,6 +184,13 @@ function presentValue(value: Answer["value"]): string {
   return String(value ?? "");
 }
 
+export function questionFor(caseRecord: CaseRecord, field: FieldDefinition): string {
+  if (field.id === "contact.phone") {
+    return `📱 *Teléfono de contacto*\n\nRegistramos que tu número de WhatsApp es:\n*${caseRecord.phoneE164}*\n\n¿Confirmas que este será el número que usaremos? Responde *Sí* o escribe otro número con código de país.`;
+  }
+  return field.prompt;
+}
+
 function finalClientMessage(caseRecord: CaseRecord, reviewNote: string): OutgoingMessage[] {
   const correction = String(caseRecord.answers["workflow.correction_notes"]?.value ?? "");
   const reportedCorrection = correction !== "SIN CORRECCIONES";
@@ -206,7 +213,7 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
   const missing = nextMissing(caseRecord);
   if (missing) {
     caseRecord.currentFieldId = missing.id;
-    return [text(missing.prompt)];
+    return [text(questionFor(caseRecord, missing))];
   }
   const progress = calculateProgress(caseRecord);
   caseRecord.currentFieldId = null;
@@ -224,7 +231,7 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
       return finalClientMessage(caseRecord, "Terminamos todas las preguntas. Nuestro equipo completará los datos visibles en tu pasaporte y revisará el expediente.");
     }
     caseRecord.status = "WAITING_FOR_CLIENT";
-    return [text(`${summary(caseRecord)}\n\nTerminamos todo lo disponible por ahora. ${pendingSummary(caseRecord)}\nCuando tengas alguno, escribe CONTINUAR. No te lo volveré a preguntar inmediatamente.`)];
+    return [text(`${summary(caseRecord)}\n\nTerminamos todo lo disponible por ahora. ${pendingSummary(caseRecord)}\nCuando tengas alguno de esos datos, vuelve a escribirnos y retomaremos desde ahí.`)];
   }
   const issues = crossFieldIssues(caseRecord.answers);
   if (issues.length) {
@@ -326,10 +333,10 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
 
   if (command === "resumen") return { caseRecord, outgoing: [text(summary(caseRecord))], auditEvents };
   if (command === "pendientes") return { caseRecord, outgoing: [text(pendingSummary(caseRecord))], auditEvents };
-  if (command === "ayuda") return { caseRecord, outgoing: [text("Comandos disponibles: SALTAR; ALTO, PAUSA, PAUSAR, DETENTE o PARA; CONTINUAR; RESUMEN; PENDIENTES y BORRAR MIS DATOS.")], auditEvents };
+  if (command === "ayuda") return { caseRecord, outgoing: [text("Puedes responder las preguntas con tus propias palabras. Si te falta un dato, escribe SALTAR. También puedes pedir RESUMEN o PENDIENTES.")], auditEvents };
   if (PAUSE_COMMANDS.has(command) && ["ACTIVE", "WAITING_FOR_CLIENT"].includes(caseRecord.status)) {
     caseRecord.status = "PAUSED";
-    return { caseRecord, outgoing: [text("Pausamos aquí. Tu avance quedó guardado y no se perderá aunque regreses otro día. Escribe CONTINUAR cuando quieras retomar.")], auditEvents: [{ event: "CASE_PAUSED", detail: { command: command.toUpperCase() } }] };
+    return { caseRecord, outgoing: [text("Claro, pausamos aquí. Tu avance quedó guardado y no se perderá aunque regreses otro día.")], auditEvents: [{ event: "CASE_PAUSED", detail: { command: command.toUpperCase() } }] };
   }
   if (command === "continuar" && ["PAUSED", "WAITING_FOR_CLIENT", "ACTIVE"].includes(caseRecord.status)) {
     caseRecord.status = "ACTIVE";
@@ -342,6 +349,25 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
       delete caseRecord.answers[pending.id];
     }
     return { caseRecord, outgoing: advance(caseRecord), auditEvents: [{ event: "CASE_RESUMED", detail: {} }] };
+  }
+  if (caseRecord.status === "PAUSED") {
+    caseRecord.status = "ACTIVE";
+    auditEvents.push({ event: "CASE_RESUMED", detail: { natural: true } });
+    if (/^(?:hola|buen(?:os|as)?\s+(?:días|dias|tardes|noches)|qué\s+tal|que\s+tal)$/i.test(input)) {
+      const current = caseRecord.currentFieldId ? fieldById(caseRecord.currentFieldId, caseRecord.answers) : undefined;
+      return { caseRecord, outgoing: current ? [text(questionFor(caseRecord, current))] : advance(caseRecord), auditEvents };
+    }
+  }
+  if (caseRecord.status === "WAITING_FOR_CLIENT") {
+    caseRecord.status = "ACTIVE";
+    const pending = unresolved(caseRecord).find((field) => {
+      const answer = caseRecord.answers[field.id];
+      return answer?.status === "PENDING" && answer.source !== "DOCUMENT";
+    });
+    if (pending) delete caseRecord.answers[pending.id];
+    caseRecord.currentFieldId = null;
+    auditEvents.push({ event: "CASE_RESUMED", detail: { natural: true, pendingFieldId: pending?.id ?? null } });
+    return { caseRecord, outgoing: advance(caseRecord), auditEvents };
   }
   if (caseRecord.status !== "ACTIVE") return { caseRecord, outgoing: [], auditEvents };
 
@@ -389,9 +415,20 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
 
   const addressResolution = resolveAddressInput(current.id, input, caseRecord.answers);
   if (!addressResolution.ok) return { caseRecord, outgoing: [text(addressResolution.message)], auditEvents };
-  const validation = validateAnswer(current, addressResolution.value);
+  let resolvedValue = addressResolution.value;
+  if (current.id === "contact.phone") {
+    if (["sí", "si", "s", "yes"].includes(command)) resolvedValue = caseRecord.phoneE164;
+    else if (["no", "n"].includes(command)) {
+      return { caseRecord, outgoing: [text("De acuerdo. Escribe el otro número que deseas usar, incluyendo el código de país.")], auditEvents };
+    }
+  }
+  const validation = validateAnswer(current, resolvedValue);
   if (!validation.ok) return { caseRecord, outgoing: [text(validation.message)], auditEvents };
+  const consistencyIssue = immediateConsistencyIssue(current.id, validation.value, caseRecord.answers);
+  if (consistencyIssue) return { caseRecord, outgoing: [text(consistencyIssue)], auditEvents };
   setAnswer(caseRecord, current.id, validation.value, "CONFIRMED", "CHAT", 100);
+  const derivedUntil = derivedEmploymentUntil(current.id, validation.value, caseRecord.answers);
+  if (derivedUntil) setAnswer(caseRecord, derivedUntil.fieldId, derivedUntil.value, "CONFIRMED", "SYSTEM", 100);
   auditEvents.push({ event: "ANSWER_CONFIRMED", detail: { fieldId: current.id, source: "CHAT", copiedFromApplicantAddress: addressResolution.copiedFromApplicant } });
   if (current.id === "workflow.correction_notes") {
     auditEvents.push({ event: "CLIENT_INTAKE_CLOSED", detail: { correctionReported: true } });

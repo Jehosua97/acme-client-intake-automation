@@ -158,16 +158,25 @@ function repeatedEmployment(answers: Answers): FieldDefinition[] {
   const result: FieldDefinition[] = [];
   for (let index = 1; index <= 20; index++) {
     const p = `employment.${index}`;
+    const newerActivity = String(answers[`employment.${index - 1}.activity`]?.value ?? "esa actividad");
+    const newerOrganization = String(answers[`employment.${index - 1}.organization`]?.value ?? "");
+    const newerContext = newerOrganization ? `${newerActivity} en ${newerOrganization}` : newerActivity;
+    const activityPrompt = index === 1
+      ? `💼 *Actividades de los últimos 10 años*\n\nPara la solicitud de visa necesitamos cubrir tus trabajos, estudios u otras actividades desde *${cutoff.display}* hasta hoy, sin dejar meses vacíos. Iremos desde tu actividad actual hacia atrás y yo organizaré las fechas.\n\nPara comenzar, ¿cuál es tu trabajo o actividad actual? También puedes indicar estudiante, negocio propio, cuidado del hogar, desempleo u otra actividad.`
+      : `Antes de *${newerContext}*, ¿qué trabajo, estudio u otra actividad realizabas?`;
+    const organizationPrompt = index === 1
+      ? "¿Cuál es el nombre de la empresa, escuela, negocio o institución donde realizas esa actividad? Si trabajas por tu cuenta, indícalo."
+      : "¿En qué empresa, escuela, negocio o institución realizabas esa actividad? Si era por cuenta propia, desempleo o cuidado del hogar, indícalo.";
     const fromPrompt = index === 1
-      ? `💼 *Actividades de los últimos 10 años*\n\nComo parte del proceso de visa, el Gobierno de Canadá necesita conocer las actividades que has desempeñado durante los últimos 10 años: estudios, empleos, cambios de trabajo, desempleo, cuidado del hogar y tu ocupación actual.\n\nVamos a registrarlas *una por una*, comenzando con la actual o más reciente y avanzando hacia atrás. Asegúrate de que no haya huecos de tiempo vacíos durante esos 10 años. Debemos cubrir desde *${cutoff.display}* hasta hoy.\n\n*Ejemplo con 2 periodos:*\n_${cutoff.example} a 01/2023 — Estudiante de Ingeniería_\n_02/2023 a ACTUAL — Trabajador remoto_\n\nComencemos con tu actividad actual o más reciente. ¿En qué mes y año comenzó? Usa MM/AAAA.`
-      : `💼 *Periodo ${index}*\n\nAhora registra la actividad inmediatamente anterior. Seguiremos retrocediendo hasta llegar a *${cutoff.display}*.\n\n¿En qué mes y año comenzó? Usa MM/AAAA.`;
+      ? "¿En qué mes y año comenzaste tu actividad actual? Usa MM/AAAA."
+      : `¿En qué mes y año comenzaste esa actividad? Usa MM/AAAA. Seguiremos hacia atrás hasta cubrir ${cutoff.display}.`;
     result.push(
+      field(`${p}.activity`, "Empleo", `Actividad ${index}`, activityPrompt),
+      field(`${p}.organization`, "Empleo", `Organización ${index}`, organizationPrompt),
       field(`${p}.from`, "Empleo", `Inicio actividad ${index}`, fromPrompt, "year_month"),
-      field(`${p}.until`, "Empleo", `Fin actividad ${index}`, `Actividad ${index}: ¿en qué mes y año terminó? Si continúa, escribe ACTUAL.`, "year_month"),
-      field(`${p}.activity`, "Empleo", `Actividad ${index}`, `Actividad ${index}: ¿cuál era tu ocupación o actividad?`),
-      field(`${p}.organization`, "Empleo", `Organización ${index}`, `Actividad ${index}: ¿cuál era la empresa, institución o situación?`),
-      field(`${p}.city`, "Empleo", `Ciudad actividad ${index}`, `Actividad ${index}: ¿en qué ciudad?`),
-      field(`${p}.province`, "Empleo", `Provincia actividad ${index}`, `Actividad ${index}: ¿en qué estado o provincia? Si no aplica, escribe SALTAR.`, "text", { required: false }),
+      field(`${p}.until`, "Empleo", `Fin actividad ${index}`, "Fecha final calculada automáticamente para mantener el historial continuo.", "year_month", { applies: (currentAnswers) => currentAnswers[`${p}.from`]?.status === "CONFIRMED" }),
+      field(`${p}.city`, "Empleo", `Ciudad actividad ${index}`, index === 1 ? "¿En qué ciudad realizas tu actividad actual?" : "¿En qué ciudad realizabas esa actividad?"),
+      field(`${p}.province`, "Empleo", `Provincia actividad ${index}`, index === 1 ? "¿En qué estado se encuentra?" : "¿En qué estado se encontraba?", "text", { required: false }),
     );
     const from = answers[`${p}.from`];
     if (from?.status !== "CONFIRMED" || typeof from.value !== "string" || from.value <= cutoff.machine) break;

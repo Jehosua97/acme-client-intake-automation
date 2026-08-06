@@ -30,7 +30,7 @@ export function addressPrompt(basePrompt: string, fieldId: string, answers: Answ
   const reference = currentAddress
     ? `*Domicilio del solicitante:*\n${currentAddress}`
     : "*Domicilio del solicitante:* pendiente";
-  return `${basePrompt}\n\n${reference}\n\nSi es la misma, escribe *MISMA*. Si no, escribe la nueva dirección completa.`;
+  return `${basePrompt}\n\n${reference}\n\nSi es la misma, responde *SÍ* o escribe *MISMA*. Si no, escribe la nueva dirección completa.`;
 }
 
 export type AddressResolution =
@@ -39,7 +39,7 @@ export type AddressResolution =
 
 export function resolveAddressInput(fieldId: string, raw: string, answers: Answers): AddressResolution {
   if (!isAlternateAddressField(fieldId)) return { ok: true, value: raw, copiedFromApplicant: false };
-  const sameAddress = new Set(["misma", "mismo", "igual", "la misma", "misma direccion"]);
+  const sameAddress = new Set(["si", "s", "yes", "misma", "mismo", "igual", "la misma", "misma direccion"]);
   if (!sameAddress.has(normalize(raw))) return { ok: true, value: raw, copiedFromApplicant: false };
   const currentAddress = applicantAddress(answers);
   if (!currentAddress) {

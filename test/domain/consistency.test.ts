@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { crossFieldIssues, employmentCoverageIssues } from "../../src/domain/consistency.js";
+import { crossFieldIssues, derivedEmploymentUntil, employmentCoverageIssues, immediateConsistencyIssue } from "../../src/domain/consistency.js";
 import type { Answer } from "../../src/domain/types.js";
 
 const answer = (fieldId: string, value: string | number): Answer => ({ fieldId, value, status: "CONFIRMED", source: "CHAT", updatedAt: new Date().toISOString() });
@@ -25,6 +25,26 @@ describe("cross-field consistency", () => {
       "employment.2.until": answer("employment.2.until", "CURRENT"),
     };
     assert.deepEqual(employmentCoverageIssues(answers, new Date("2026-08-05T00:00:00Z")), []);
+  });
+
+  it("derives contiguous employment end dates while moving backwards", () => {
+    const answers = {
+      "employment.1.from": answer("employment.1.from", "2023-02"),
+    };
+    assert.deepEqual(derivedEmploymentUntil("employment.1.from", "2023-02", {}), {
+      fieldId: "employment.1.until",
+      value: "CURRENT",
+    });
+    assert.deepEqual(derivedEmploymentUntil("employment.2.from", "2016-08", answers), {
+      fieldId: "employment.2.until",
+      value: "2023-01",
+    });
+  });
+
+  it("requires arrival to be strictly earlier than departure", () => {
+    const answers = { "visit.from": answer("visit.from", "2027-06-15") };
+    assert.match(immediateConsistencyIssue("visit.until", "2027-06-15", answers) ?? "", /posterior/);
+    assert.equal(immediateConsistencyIssue("visit.until", "2027-06-16", answers), null);
   });
 
   it("detects impossible passport and visit chronology", () => {

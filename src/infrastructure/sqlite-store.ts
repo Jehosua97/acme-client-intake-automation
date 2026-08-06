@@ -4,7 +4,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { calculateProgress, newCase } from "../domain/engine.js";
 import { fieldById } from "../domain/catalog.js";
-import { crossFieldIssues } from "../domain/consistency.js";
+import { crossFieldIssues, derivedEmploymentUntil, immediateConsistencyIssue } from "../domain/consistency.js";
 import type { Answer, CaseRecord, CaseStatus } from "../domain/types.js";
 import { validateAnswer } from "../domain/validation.js";
 import { resolveAddressInput } from "../domain/address.js";
@@ -320,8 +320,21 @@ export class SQLiteStore {
     if (!addressResolution.ok) throw new Error(`INVALID_VALUE:${addressResolution.message}`);
     const validation = validateAnswer(definition, addressResolution.value);
     if (!validation.ok) throw new Error(`INVALID_VALUE:${validation.message}`);
+    const consistencyIssue = immediateConsistencyIssue(fieldId, validation.value, caseRecord.answers);
+    if (consistencyIssue) throw new Error(`INVALID_VALUE:${consistencyIssue}`);
     const answer: Answer = { fieldId, value: validation.value, status: "CONFIRMED", source: "STAFF", confidence: 100, updatedAt: iso() };
     caseRecord.answers[fieldId] = answer;
+    const derivedUntil = derivedEmploymentUntil(fieldId, validation.value, caseRecord.answers);
+    if (derivedUntil) {
+      caseRecord.answers[derivedUntil.fieldId] = {
+        fieldId: derivedUntil.fieldId,
+        value: derivedUntil.value,
+        status: "CONFIRMED",
+        source: "SYSTEM",
+        confidence: 100,
+        updatedAt: iso(),
+      };
+    }
     const progress = calculateProgress(caseRecord);
     if (caseRecord.status === "NEEDS_STAFF_REVIEW"
       && caseRecord.currentFieldId === null
