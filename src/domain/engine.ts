@@ -7,6 +7,7 @@ import { unknownParentValue } from "./family.js";
 
 const SKIP = new Set(["saltar", "no sé", "no se", "no tengo", "no aplica", "n/a", "pendiente", "después", "despues"]);
 const PAUSE_COMMANDS = new Set(["alto", "pausa", "pausar", "detente", "para"]);
+const NO_CORRECTIONS = /^(?:todo\s+correcto|todo\s+bien|sin\s+correcciones|ningun[oa]?|no|no\s+hubo)$/i;
 const INTAKE_OVERVIEW = `👋 *Así será el proceso*
 
 Normalmente toma entre 30 y 45 minutos en total y está dividido en 5 bloques:
@@ -183,6 +184,18 @@ function presentValue(value: Answer["value"]): string {
   return String(value ?? "");
 }
 
+function finalClientMessage(caseRecord: CaseRecord, reviewNote: string): OutgoingMessage[] {
+  const correction = String(caseRecord.answers["workflow.correction_notes"]?.value ?? "");
+  const reportedCorrection = correction !== "SIN CORRECCIONES";
+  const emailAnswer = caseRecord.answers["contact.email"];
+  const email = emailAnswer?.status === "CONFIRMED" && typeof emailAnswer.value === "string" ? emailAnswer.value : null;
+  const emailMessage = email
+    ? `En las próximas horas recibirás un correo en:\n📧 *${email}*\n\nAhí podrás revisar y confirmar los datos que nos compartiste.`
+    : "Nuestro equipo se comunicará contigo para confirmar tus datos, ya que no tenemos un correo electrónico confirmado.";
+  const title = reportedCorrection ? "✅ *Gracias. Registramos tu corrección.*" : "✅ *Eso es todo. Muchas gracias.*";
+  return [text(`${title}\n\n${reviewNote}\n\n${emailMessage}\n\nTu captura quedó cerrada y el bot ya no procesará más mensajes de esta conversación para este expediente.`)];
+}
+
 function advance(caseRecord: CaseRecord): OutgoingMessage[] {
   const proposed = proposedFields(caseRecord);
   if (proposed.length) {
@@ -199,7 +212,7 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
   caseRecord.currentFieldId = null;
   if (progress.conflicts > 0) {
     caseRecord.status = "NEEDS_STAFF_REVIEW";
-    return [text("✅ *Tus preguntas están completas: 100%*\n\nEncontramos datos que nuestro equipo debe revisar internamente. Conservamos todo tu avance y te contactaremos si necesitamos aclarar algo.\n\nNo necesitas responder nada más en este momento.")];
+    return finalClientMessage(caseRecord, "Nuestro equipo revisará internamente los datos que necesitan aclaración.");
   }
   if (progress.pending > 0) {
     const hasClientPending = unresolved(caseRecord).some((field) => {
@@ -208,7 +221,7 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
     });
     if (!hasClientPending) {
       caseRecord.status = "NEEDS_STAFF_REVIEW";
-      return [text(`✅ *Tus preguntas están completas: 100%*\n\nTerminamos todo lo que necesitábamos preguntarte por ahora. Nuestro equipo completará internamente los datos visibles en tu pasaporte y revisará el expediente.\n\nNo necesitas responder nada más en este momento.`)];
+      return finalClientMessage(caseRecord, "Terminamos todas las preguntas. Nuestro equipo completará los datos visibles en tu pasaporte y revisará el expediente.");
     }
     caseRecord.status = "WAITING_FOR_CLIENT";
     return [text(`${summary(caseRecord)}\n\nTerminamos todo lo disponible por ahora. ${pendingSummary(caseRecord)}\nCuando tengas alguno, escribe CONTINUAR. No te lo volveré a preguntar inmediatamente.`)];
@@ -216,10 +229,10 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
   const issues = crossFieldIssues(caseRecord.answers);
   if (issues.length) {
     caseRecord.status = "NEEDS_STAFF_REVIEW";
-    return [text(`✅ *Tus preguntas están completas: 100%*\n\nDetectamos ${issues.length} posible(s) inconsistencia(s) que nuestro equipo revisará internamente:\n${issues.slice(0, 5).map((issue) => `• ${issue}`).join("\n")}\n\nNo necesitas responder nada más en este momento.`)];
+    return finalClientMessage(caseRecord, `Terminamos todas las preguntas. Nuestro equipo revisará internamente ${issues.length} posible(s) inconsistencia(s) antes de continuar.`);
   }
   caseRecord.status = "READY_FOR_REVIEW";
-  return [text(`✅ *Tus preguntas están completas: 100%*\n\n¡Terminamos esta etapa! Nuestro equipo revisará la información antes de usarla.\n\nNo necesitas responder nada más en este momento.`)];
+  return finalClientMessage(caseRecord, "Terminamos todas las preguntas. Nuestro equipo revisará la información antes de continuar.");
 }
 
 export function invite(caseRecord: CaseRecord, templateName: string, language: string): EngineResult {
@@ -357,6 +370,13 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
   if (!current) return { caseRecord, outgoing: advance(caseRecord), auditEvents };
   const existing = caseRecord.answers[current.id];
 
+  if (current.id === "workflow.correction_notes" && (SKIP.has(command) || NO_CORRECTIONS.test(command))) {
+    setAnswer(caseRecord, current.id, "SIN CORRECCIONES", "CONFIRMED", "CHAT", 100);
+    caseRecord.updatedAt = now();
+    auditEvents.push({ event: "CLIENT_INTAKE_CLOSED", detail: { correctionReported: false } });
+    return { caseRecord, outgoing: advance(caseRecord), auditEvents };
+  }
+
   if (SKIP.has(command) && !unknownParentValue(current.id, input)) {
     setAnswer(caseRecord, current.id, null, "PENDING", "CHAT");
     auditEvents.push({ event: "ANSWER_SKIPPED", detail: { fieldId: current.id } });
@@ -373,6 +393,9 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
   if (!validation.ok) return { caseRecord, outgoing: [text(validation.message)], auditEvents };
   setAnswer(caseRecord, current.id, validation.value, "CONFIRMED", "CHAT", 100);
   auditEvents.push({ event: "ANSWER_CONFIRMED", detail: { fieldId: current.id, source: "CHAT", copiedFromApplicantAddress: addressResolution.copiedFromApplicant } });
+  if (current.id === "workflow.correction_notes") {
+    auditEvents.push({ event: "CLIENT_INTAKE_CLOSED", detail: { correctionReported: true } });
+  }
   caseRecord.updatedAt = now();
   return { caseRecord, outgoing: advance(caseRecord), auditEvents };
 }

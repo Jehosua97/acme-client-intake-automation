@@ -189,12 +189,21 @@ function repeatedTravel(answers: Answers): FieldDefinition[] {
   return result;
 }
 
+const closingField = field(
+  "workflow.correction_notes",
+  "Cierre",
+  "Errores o correcciones reportadas",
+  "📝 *Revisión final*\n\n¿Hubo algún dato que hayas escrito incorrectamente por accidente durante el llenado?\n\nSi es así, descríbelo aquí e indica cuál es el dato correcto para que podamos identificarlo rápidamente.\n\nSi todo está bien, escribe *TODO CORRECTO*.",
+  "text",
+  { forms: ["CLIENT_REVIEW"] },
+);
+
 export function catalogFor(answers: Answers): FieldDefinition[] {
   const childInsert = core.findIndex((item) => item.id === "children.count") + 1;
   const withChildren = [...core.slice(0, childInsert), ...repeatedChildren(answers), ...core.slice(childInsert)];
   const adjustedEmploymentInsert = withChildren.findIndex((item) => item.id === "visit.purpose");
   const withEmployment = [...withChildren.slice(0, adjustedEmploymentInsert), ...repeatedEmployment(answers), ...withChildren.slice(adjustedEmploymentInsert)];
-  const complete = [...withEmployment, ...repeatedTravel(answers)];
+  const complete = [...withEmployment, ...repeatedTravel(answers), closingField];
   return complete.filter((item) => item.applies(answers)).map((item, index) => ({
     ...item,
     prompt: addressPrompt(item.prompt, item.id, answers),

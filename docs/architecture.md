@@ -76,6 +76,8 @@ Se aceptan `application/pdf`, `image/jpeg`, `image/png` e `image/webp`, con un l
 - Los mensajes de estado, difusión y grupos son ignorados.
 - El identificador de cada mensaje se almacena para impedir procesamiento duplicado.
 - Después del pasaporte se pide el nombre completo para identificar el expediente; los demás campos visibles en ese documento quedan pendientes de revisión humana.
+- La pregunta de correcciones se agrega después de todos los bloques dinámicos, incluidos hijos, actividades y viajes.
+- Al responder el cierre, el expediente deja de procesar mensajes o archivos posteriores de ese chat; la revisión del personal continúa en el panel.
 - El estado y la pregunta actual se guardan después de cada turno.
 
 ## Seguridad local

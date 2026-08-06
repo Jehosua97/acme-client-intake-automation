@@ -199,6 +199,11 @@ export class WhatsAppLocalService {
         if (caseRecord) for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
       }
       if (!caseRecord) { this.store.markProcessed(messageId); return; }
+      if (["NEEDS_STAFF_REVIEW", "READY_FOR_REVIEW", "COMPLETE", "DECLINED", "DELETION_REQUESTED"].includes(caseRecord.status)) {
+        // The WhatsApp connection is global, but closed case content is neither
+        // persisted nor processed once the source chat has been identified.
+        return;
+      }
 
       if (message.hasMedia && ["image", "document"].includes(message.type)) {
         if (caseRecord.status !== "ACTIVE") {

@@ -232,9 +232,12 @@ describe("conversation engine", () => {
   it("asks travel history in direct, client-friendly language", () => {
     const caseRecord = activeCase();
     caseRecord.answers["travel_history.has_travel"] = confirmed("travel_history.has_travel", true);
+    caseRecord.answers["travel_history.count"] = confirmed("travel_history.count", 1);
     const fields = catalogFor(caseRecord.answers);
     assert.equal(fields.find((field) => field.id === "travel_history.has_travel")?.prompt, "✈️ ¿Has viajado al extranjero? Responde Sí o No.");
     assert.equal(fields.find((field) => field.id === "travel_history.count")?.prompt, "¿Cuántas veces has viajado al extranjero?");
+    assert.ok(fields.findIndex((field) => field.id === "workflow.correction_notes") > fields.findIndex((field) => field.id === "travel_history.1.purpose"));
+    assert.equal(fields.at(-1)?.id, "workflow.correction_notes");
   });
 
   it("pauses and resumes at the persisted field", () => {
@@ -300,6 +303,7 @@ describe("conversation engine", () => {
   it("can complete the entire non-sensitive stage without looping", () => {
     const caseRecord = activeCase();
     let lastOutgoing = "";
+    let lastAuditEvents: Array<{ event: string; detail: Record<string, unknown> }> = [];
     for (let turns = 0; turns < 400 && caseRecord.status === "ACTIVE"; turns++) {
       assert.notEqual(caseRecord.currentFieldId, null);
       if (caseRecord.currentFieldId === "__proposal_batch__") {
@@ -325,18 +329,26 @@ describe("conversation engine", () => {
       } else if (current.kind === "email") value = "cliente@example.com";
       else if (current.kind === "phone") value = "+52 55 1234 5678";
       else if (current.kind === "money") value = "5000";
+      if (current.id === "workflow.correction_notes") value = "TODO CORRECTO";
       if (current.id === "workflow.passport_uploaded") {
         const result = handlePassportDocument(caseRecord, "drive-file-1", []);
         lastOutgoing = result.outgoing.map((message) => message.type === "text" ? message.body : "").join("\n");
+        lastAuditEvents = result.auditEvents;
         continue;
       }
       const result = handleClientText(caseRecord, value);
       lastOutgoing = result.outgoing.map((message) => message.type === "text" ? message.body : "").join("\n");
+      lastAuditEvents = result.auditEvents;
     }
     assert.equal(caseRecord.status, "NEEDS_STAFF_REVIEW");
     assert.ok(calculateProgress(caseRecord).percent < 100);
     assert.equal(calculateClientProgress(caseRecord).percent, 100);
-    assert.match(lastOutgoing, /preguntas están completas: 100%/);
-    assert.match(lastOutgoing, /No necesitas responder nada más/);
+    assert.equal(caseRecord.answers["workflow.correction_notes"]?.value, "SIN CORRECCIONES");
+    assert.match(lastOutgoing, /Eso es todo\. Muchas gracias/);
+    assert.match(lastOutgoing, /cliente@example\.com/);
+    assert.match(lastOutgoing, /próximas horas/);
+    assert.match(lastOutgoing, /bot ya no procesará más mensajes/);
+    assert.equal(lastAuditEvents.some((event) => event.event === "CLIENT_INTAKE_CLOSED"), true);
+    assert.deepEqual(handleClientText(caseRecord, "Otro mensaje").outgoing, []);
   });
 });

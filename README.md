@@ -28,6 +28,7 @@ The solution turns that process into a persistent, auditable workflow while pres
 - ACME obtains the customer's signed authorization before the operator starts the bot; the chat does not repeat that authorization step.
 - Questions are delivered one at a time and validated according to their data type.
 - Every response and conversation position is persisted, allowing interruption and recovery at any moment.
+- After the last dynamic question, the customer gets one final opportunity to report an accidental correction; the case then stops processing that conversation.
 - Customers can use `SALTAR`, `ALTO`/`PAUSA`/`PAUSAR`/`DETENTE`/`PARA`, `CONTINUAR`, `RESUMEN`, and `PENDIENTES`.
 - Passport images and PDF files are placed in a dedicated Google Drive folder for each customer.
 - The complete applicant name is collected immediately after the passport so every row is identifiable in the dashboard; the remaining passport fields are flagged for manual staff review.
@@ -193,6 +194,7 @@ Supervisor and application logs are stored in `.data/logs/`.
 6. The bot asks for the applicant's complete name, which becomes the dashboard row name.
 7. Staff complete passport-derived fields manually from the dashboard.
 8. The dashboard can download the client-safe PDF or email it to the confirmed customer address for validation.
+9. The bot asks for final corrections, confirms the destination email, and closes automated processing for that case.
 
 Sending `INICIAR BOT` again does not reset an active case.
 
