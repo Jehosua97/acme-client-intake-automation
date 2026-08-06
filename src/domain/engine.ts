@@ -5,18 +5,28 @@ import { crossFieldIssues } from "./consistency.js";
 import { resolveAddressInput } from "./address.js";
 import { unknownParentValue } from "./family.js";
 
-export const CONSENT_VERSION = "2026-08-05-v1";
 const SKIP = new Set(["saltar", "no sé", "no se", "no tengo", "no aplica", "n/a", "pendiente", "después", "despues"]);
 const PAUSE_COMMANDS = new Set(["alto", "pausa", "pausar", "detente", "para"]);
-const INTAKE_OVERVIEW = `Antes de empezar, te explico cómo será el proceso. Normalmente toma entre 30 y 45 minutos en total y está dividido en 5 bloques:
+const INTAKE_OVERVIEW = `👋 *Así será el proceso*
 
-1. Datos personales y residencia: aproximadamente 4 respuestas; varios datos se toman del pasaporte.
-2. Familia: hasta 18 preguntas base; pueden agregarse otras si tienes pareja o hijos, y se reducen si no conoces los datos de alguno de tus padres o si algún familiar falleció.
-3. Contacto e idiomas: aproximadamente 8 preguntas.
-4. Estudios y actividades de los últimos 10 años: mínimo 9 preguntas; aumenta según tus periodos.
-5. Viaje a Canadá e historial de viajes: mínimo 8 preguntas.
+Normalmente toma entre 30 y 45 minutos en total y está dividido en 5 bloques:
 
-Te preguntaré una cosa a la vez. No tienes que terminar hoy: puedes completarlo en varias interacciones o incluso en distintos días. Para detener las preguntas escribe ALTO, PAUSA, DETENTE o PARA. Todo tu avance queda guardado. Cuando quieras regresar, escribe CONTINUAR. Si te falta un dato, escribe SALTAR.`;
+1️⃣ *Datos personales, residencia y contacto*
+Varios datos se tomarán directamente de tu pasaporte.
+
+2️⃣ *Familia*
+Las preguntas se adaptan según tu pareja, hijos y los datos que conozcas de tus padres.
+
+3️⃣ *Idiomas*
+
+4️⃣ *Estudios y actividades de los últimos 10 años*
+Las actividades se registran una por una; no necesitas saber de antemano cuántos periodos son.
+
+5️⃣ *Viaje a Canadá e historial de viajes*
+
+*Puedes hacerlo en varios días.* Todo tu avance queda guardado después de cada respuesta. Para detener las preguntas escribe *ALTO*, *PAUSA*, *DETENTE* o *PARA*. Cuando quieras regresar, escribe *CONTINUAR* o simplemente responde la pregunta que quedó pendiente.
+
+Si te falta algún dato, escribe *SALTAR*.`;
 const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]> = [
   ["identity.birth_country", "México"],
   ["identity.citizenship", "México"],
@@ -27,6 +37,7 @@ const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]>
   ["contact.residential_country", "México"],
   ["language.mother_tongue", "Español"],
   ["language.preferred", "Inglés"],
+  ["education.country", "México"],
 ];
 const PASSPORT_MANUAL_REVIEW_FIELDS = [
   "identity.full_name",
@@ -47,6 +58,14 @@ function applyMexicoProfileDefaults(caseRecord: CaseRecord): string[] {
   for (const [fieldId, value] of MEXICO_PROFILE_DEFAULTS) {
     if (caseRecord.answers[fieldId]) continue;
     setAnswer(caseRecord, fieldId, value, "CONFIRMED", "SYSTEM", 100);
+    applied.push(fieldId);
+  }
+  for (const definition of catalogFor(caseRecord.answers)) {
+    const match = definition.id.match(/^employment\.(\d+)\.from$/);
+    if (!match) continue;
+    const fieldId = `employment.${match[1]}.country`;
+    if (caseRecord.answers[fieldId]) continue;
+    setAnswer(caseRecord, fieldId, "México", "CONFIRMED", "SYSTEM", 100);
     applied.push(fieldId);
   }
   return applied;
@@ -101,21 +120,44 @@ export function calculateProgress(caseRecord: CaseRecord): Progress {
   };
 }
 
+function clientApplicableFields(caseRecord: CaseRecord): FieldDefinition[] {
+  return catalogFor(caseRecord.answers).filter((field) => {
+    if (!field.required) return false;
+    const answer = caseRecord.answers[field.id];
+    return !(answer?.status === "PENDING" && answer.source === "DOCUMENT");
+  });
+}
+
+export function calculateClientProgress(caseRecord: CaseRecord): Progress {
+  const applicable = clientApplicableFields(caseRecord);
+  const requiredIds = new Set(applicable.map((field) => field.id));
+  const values = Object.values(caseRecord.answers).filter((answer) => requiredIds.has(answer.fieldId));
+  const confirmed = values.filter((answer) => answer.status === "CONFIRMED").length;
+  return {
+    confirmed,
+    required: applicable.length,
+    pending: values.filter((answer) => answer.status === "PENDING").length,
+    proposed: values.filter((answer) => answer.status === "PROPOSED").length,
+    conflicts: values.filter((answer) => answer.status === "CONFLICT").length,
+    percent: Math.round((confirmed / Math.max(applicable.length, 1)) * 100),
+  };
+}
+
 function unresolved(caseRecord: CaseRecord): FieldDefinition[] {
   return catalogFor(caseRecord.answers).filter((field) => field.required && caseRecord.answers[field.id]?.status !== "CONFIRMED");
 }
 
 function summary(caseRecord: CaseRecord): string {
-  const progress = calculateProgress(caseRecord);
+  const progress = calculateClientProgress(caseRecord);
   const sections = new Map<string, { done: number; total: number }>();
-  for (const field of catalogFor(caseRecord.answers).filter((item) => item.required)) {
+  for (const field of clientApplicableFields(caseRecord)) {
     const current = sections.get(field.section) ?? { done: 0, total: 0 };
     current.total += 1;
     if (caseRecord.answers[field.id]?.status === "CONFIRMED") current.done += 1;
     sections.set(field.section, current);
   }
   const lines = [...sections].map(([section, value]) => `• ${section}: ${value.done}/${value.total}`);
-  return `Avance: ${progress.percent}% (${progress.confirmed} de ${progress.required} datos)\n${lines.join("\n")}`;
+  return `*Avance de tus preguntas: ${progress.percent}%* (${progress.confirmed} de ${progress.required})\n${lines.join("\n")}`;
 }
 
 function pendingSummary(caseRecord: CaseRecord): string {
@@ -157,7 +199,7 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
   caseRecord.currentFieldId = null;
   if (progress.conflicts > 0) {
     caseRecord.status = "NEEDS_STAFF_REVIEW";
-    return [text("Hay datos contradictorios que nuestro equipo debe revisar. Conservamos todo tu avance y te contactaremos si necesitamos aclarar algo.")];
+    return [text("✅ *Tus preguntas están completas: 100%*\n\nEncontramos datos que nuestro equipo debe revisar internamente. Conservamos todo tu avance y te contactaremos si necesitamos aclarar algo.\n\nNo necesitas responder nada más en este momento.")];
   }
   if (progress.pending > 0) {
     const hasClientPending = unresolved(caseRecord).some((field) => {
@@ -166,7 +208,7 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
     });
     if (!hasClientPending) {
       caseRecord.status = "NEEDS_STAFF_REVIEW";
-      return [text(`${summary(caseRecord)}\n\nTerminamos tus preguntas por ahora. Nuestro equipo completará manualmente los datos visibles en tu pasaporte y revisará el expediente.`)];
+      return [text(`✅ *Tus preguntas están completas: 100%*\n\nTerminamos todo lo que necesitábamos preguntarte por ahora. Nuestro equipo completará internamente los datos visibles en tu pasaporte y revisará el expediente.\n\nNo necesitas responder nada más en este momento.`)];
     }
     caseRecord.status = "WAITING_FOR_CLIENT";
     return [text(`${summary(caseRecord)}\n\nTerminamos todo lo disponible por ahora. ${pendingSummary(caseRecord)}\nCuando tengas alguno, escribe CONTINUAR. No te lo volveré a preguntar inmediatamente.`)];
@@ -174,10 +216,10 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
   const issues = crossFieldIssues(caseRecord.answers);
   if (issues.length) {
     caseRecord.status = "NEEDS_STAFF_REVIEW";
-    return [text(`Terminamos las preguntas, pero detecté ${issues.length} posible(s) inconsistencia(s):\n${issues.slice(0, 5).map((issue) => `• ${issue}`).join("\n")}\nNuestro equipo las revisará antes de continuar.`)];
+    return [text(`✅ *Tus preguntas están completas: 100%*\n\nDetectamos ${issues.length} posible(s) inconsistencia(s) que nuestro equipo revisará internamente:\n${issues.slice(0, 5).map((issue) => `• ${issue}`).join("\n")}\n\nNo necesitas responder nada más en este momento.`)];
   }
   caseRecord.status = "READY_FOR_REVIEW";
-  return [text(`¡Terminamos esta etapa! ${summary(caseRecord)}\nNuestro equipo revisará la información antes de usarla.`)];
+  return [text(`✅ *Tus preguntas están completas: 100%*\n\n¡Terminamos esta etapa! Nuestro equipo revisará la información antes de usarla.\n\nNo necesitas responder nada más en este momento.`)];
 }
 
 export function invite(caseRecord: CaseRecord, templateName: string, language: string): EngineResult {
@@ -191,13 +233,22 @@ export function invite(caseRecord: CaseRecord, templateName: string, language: s
   };
 }
 
-export function acknowledgeInvitation(caseRecord: CaseRecord): EngineResult {
-  if (caseRecord.status === "INVITED") caseRecord.status = "AWAITING_CONSENT";
+export function startIntake(caseRecord: CaseRecord): EngineResult {
+  caseRecord.status = "ACTIVE";
+  caseRecord.consentVersion = null;
+  caseRecord.consentedAt = null;
+  if (/^\+\d{7,15}$/.test(caseRecord.phoneE164)) {
+    setAnswer(caseRecord, "contact.phone", caseRecord.phoneE164, "CONFIRMED", "SYSTEM", 100);
+  }
+  const defaultedFields = applyMexicoProfileDefaults(caseRecord);
   caseRecord.updatedAt = now();
   return {
     caseRecord,
-    outgoing: [text("Antes de comenzar: usaremos tus respuestas y documentos para preparar tu expediente. Puedes pausar o pedir eliminar tus datos. Si estás de acuerdo, escribe ACEPTO. Si no, escribe NO ACEPTO.")],
-    auditEvents: [{ event: "CONSENT_REQUESTED", detail: { version: CONSENT_VERSION } }],
+    outgoing: [text(INTAKE_OVERVIEW), ...advance(caseRecord)],
+    auditEvents: [
+      { event: "PREAUTHORIZED_INTAKE_STARTED", detail: {} },
+      { event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } },
+    ],
   };
 }
 
@@ -258,27 +309,7 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
     return { caseRecord, outgoing: [text("Registré tu solicitud de eliminación. El equipo verificará tu identidad y completará el proceso según la política aplicable.")], auditEvents: [{ event: "DELETION_REQUESTED", detail: {} }] };
   }
 
-  if (caseRecord.status === "INVITED") return acknowledgeInvitation(caseRecord);
-  if (caseRecord.status === "AWAITING_CONSENT") {
-    if (["acepto", "aceptar", "sí acepto", "si acepto"].includes(command)) {
-      caseRecord.status = "ACTIVE";
-      caseRecord.consentVersion = CONSENT_VERSION;
-      caseRecord.consentedAt = now();
-      if (/^\+\d{7,15}$/.test(caseRecord.phoneE164)) {
-        setAnswer(caseRecord, "contact.phone", caseRecord.phoneE164, "CONFIRMED", "SYSTEM", 100);
-      }
-      const defaultedFields = applyMexicoProfileDefaults(caseRecord);
-      auditEvents.push({ event: "CONSENT_ACCEPTED", detail: { version: CONSENT_VERSION } });
-      auditEvents.push({ event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } });
-      return { caseRecord, outgoing: [text(INTAKE_OVERVIEW), ...advance(caseRecord)], auditEvents };
-    }
-    if (["no acepto", "rechazo", "no"].includes(command)) {
-      caseRecord.status = "DECLINED";
-      caseRecord.updatedAt = now();
-      return { caseRecord, outgoing: [text("Entendido. No iniciaremos la recopilación. Puedes comunicarte directamente con nuestro equipo si cambias de opinión.")], auditEvents: [{ event: "CONSENT_DECLINED", detail: {} }] };
-    }
-    return { caseRecord, outgoing: [text("Para proteger tu información necesito una respuesta clara: escribe ACEPTO o NO ACEPTO.")], auditEvents };
-  }
+  if (["INVITED", "AWAITING_CONSENT"].includes(caseRecord.status)) return startIntake(caseRecord);
 
   const defaultedFields = applyMexicoProfileDefaults(caseRecord);
   if (defaultedFields.length) auditEvents.push({ event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } });

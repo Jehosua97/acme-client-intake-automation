@@ -10,6 +10,19 @@ const isKnownAndNotDeceased = (fullNameFieldId: string, maritalStatusFieldId: st
   isKnownParent(fullNameFieldId)(answers) && isNotReportedDeceased(maritalStatusFieldId)(answers)
 );
 
+const SPANISH_MONTHS = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"] as const;
+
+function employmentCutoff(referenceDate = new Date()): { machine: string; display: string; example: string } {
+  const year = referenceDate.getFullYear() - 10;
+  const month = referenceDate.getMonth() + 1;
+  const machine = `${year}-${String(month).padStart(2, "0")}`;
+  return {
+    machine,
+    display: `${SPANISH_MONTHS[month - 1]} de ${year}`,
+    example: `${String(month).padStart(2, "0")}/${year}`,
+  };
+}
+
 let order = 0;
 const field = (
   id: string,
@@ -31,7 +44,7 @@ const field = (
 });
 
 const core: FieldDefinition[] = [
-  field("workflow.passport_uploaded", "Inicio", "Pasaporte recibido", "Para comenzar, envíame una foto clara o un PDF de la página de datos de tu pasaporte. Si no lo tienes en este momento, escribe SALTAR y quedará pendiente.", "text", { forms: ["INTERNAL"] }),
+  field("workflow.passport_uploaded", "Inicio", "Pasaporte recibido", "📘 *Comencemos con tu pasaporte*\n\nEnvíame una foto clara o un PDF de la página donde aparecen tus datos.\n\nSi no lo tienes en este momento, escribe *SALTAR* y quedará pendiente.", "text", { forms: ["INTERNAL"] }),
   field("application.uci", "Inicio", "UCI", "Si alguna vez tuviste un número UCI de Canadá, escríbelo. Si no lo tienes o no lo conoces, escribe SALTAR.", "text", { required: false }),
   field("application.visa_type", "Inicio", "Tipo de visa", "¿El trámite es para una visa de visitante (turista) o una visa de tránsito?"),
   field("identity.full_name", "Datos personales", "Nombre completo", "¿Cuál es tu nombre completo, incluyendo todos tus nombres y apellidos, tal como aparece en tu pasaporte?", "text", { forms: ["IMM5257", "IMM5707"] }),
@@ -54,8 +67,11 @@ const core: FieldDefinition[] = [
   field("residence.application_country", "Residencia", "País desde donde solicita", "¿Desde qué país estás haciendo la solicitud?", "text", { applies: (a) => a["residence.applying_from_current"]?.value === false }),
   field("residence.application_status", "Residencia", "Estatus en país de solicitud", "¿Qué estatus tienes en ese país?", "text", { applies: (a) => a["residence.applying_from_current"]?.value === false }),
 
-  field("contact.residential_address", "Residencia", "Domicilio actual completo", "¿Cuál es tu domicilio actual completo? Escríbelo en este orden: nombre de la calle y número, colonia, delegación o municipio, ciudad y código postal. Ejemplo ficticio: Avenida de los Pinos 245, Colonia Costa Verde, Municipio de Boca del Río, Veracruz, C.P. 94294."),
+  field("contact.residential_address", "Residencia", "Domicilio actual completo", "🏠 *Domicilio actual*\n\n¿Cuál es tu domicilio actual completo?\n\nIncluye: calle y número, colonia, delegación o municipio, ciudad y código postal.\n\n_Ejemplo ficticio: Avenida de los Pinos 245, Colonia Costa Verde, Municipio de Boca del Río, Veracruz, C.P. 94294._"),
   field("contact.mailing_address", "Residencia", "Dirección postal completa", "¿Cuál es tu dirección completa para recibir correspondencia?"),
+  field("contact.email", "Contacto", "Correo electrónico", "📧 ¿Cuál es tu correo electrónico?", "email"),
+  field("contact.phone", "Contacto", "Teléfono principal", "📱 ¿Cuál es tu teléfono principal con código de país?", "phone"),
+  field("contact.phone_type", "Contacto", "Tipo de teléfono", "¿Ese teléfono es celular, casa o trabajo?"),
 
   field("family.marital_status", "Familia", "Estado civil", "¿Cuál es tu estado civil actual?", "text", { forms: ["IMM5257", "IMM5707"] }),
   field("family.has_partner", "Familia", "Tiene pareja", "¿Tienes esposo/a, pareja de hecho o pareja conyugal actualmente? Sí o No.", "yes_no", { forms: ["IMM5257", "IMM5707"] }),
@@ -91,10 +107,6 @@ const core: FieldDefinition[] = [
 
   field("children.count", "Familia", "Cantidad de hijos", "¿Cuántos hijos tienes? Incluye biológicos, adoptados, hijastros y de relaciones anteriores. Escribe 0 si no tienes.", "integer", { forms: ["IMM5707"] }),
 
-  field("contact.email", "Contacto", "Correo electrónico", "¿Cuál es tu correo electrónico?", "email"),
-  field("contact.phone", "Contacto", "Teléfono principal", "¿Cuál es tu teléfono principal con código de país?", "phone"),
-  field("contact.phone_type", "Contacto", "Tipo de teléfono", "¿Ese teléfono es celular, casa o trabajo?"),
-
   field("language.english", "Idiomas", "Inglés", "¿Puedes comunicarte en inglés? Sí o No.", "yes_no"),
   field("language.french", "Idiomas", "Francés", "¿Puedes comunicarte en francés? Sí o No.", "yes_no"),
   field("language.official_test", "Idiomas", "Examen oficial", "¿Has tomado un examen oficial de inglés o francés? Sí o No.", "yes_no"),
@@ -106,9 +118,6 @@ const core: FieldDefinition[] = [
   field("education.school", "Educación", "Institución", "¿Cuál fue la escuela o institución?", "text", { applies: isYes("education.has_postsecondary") }),
   field("education.city", "Educación", "Ciudad de institución", "¿En qué ciudad está la institución?", "text", { applies: isYes("education.has_postsecondary") }),
   field("education.province", "Educación", "Estado o provincia de institución", "¿En qué estado o provincia? Si no aplica, escribe SALTAR.", "text", { required: false, applies: isYes("education.has_postsecondary") }),
-  field("education.country", "Educación", "País de institución", "¿En qué país está?", "text", { applies: isYes("education.has_postsecondary") }),
-
-  field("employment.count", "Empleo", "Cantidad de actividades", "Para cubrir los últimos 10 años sin huecos, ¿cuántos periodos necesitas registrar? Incluye trabajo, estudios, desempleo y cuidado del hogar.", "integer"),
 
   field("visit.purpose", "Viaje", "Propósito de visita", "¿Cuál es el propósito principal de tu visita a Canadá?"),
   field("visit.from", "Viaje", "Inicio de visita", "¿En qué fecha planeas llegar a Canadá? Usa DD/MM/AAAA.", "date"),
@@ -117,8 +126,8 @@ const core: FieldDefinition[] = [
   field("visit.contact_name", "Viaje", "Persona o institución en Canadá", "¿Cuál es el nombre de la persona o institución que visitarás en Canadá?"),
   field("visit.contact_relationship", "Viaje", "Relación con contacto", "¿Qué relación tiene contigo?"),
   field("visit.contact_address", "Viaje", "Dirección del contacto", "¿Cuál es su dirección en Canadá?"),
-  field("travel_history.has_travel", "Viajes anteriores", "Viajes fuera de ciudadanía/residencia", "Desde que cumpliste 18 años o durante los últimos 5 años, lo que sea más reciente: ¿viajaste a un país distinto al de tu ciudadanía o residencia actual? Sí o No.", "yes_no", { forms: ["IMM5257-SCHEDULE-1"] }),
-  field("travel_history.count", "Viajes anteriores", "Cantidad de viajes", "¿Cuántos viajes distintos necesitas registrar?", "integer", { applies: isYes("travel_history.has_travel"), forms: ["IMM5257-SCHEDULE-1"] }),
+  field("travel_history.has_travel", "Viajes anteriores", "Viajes al extranjero", "✈️ ¿Has viajado al extranjero? Responde Sí o No.", "yes_no", { forms: ["IMM5257-SCHEDULE-1"] }),
+  field("travel_history.count", "Viajes anteriores", "Cantidad de viajes", "¿Cuántas veces has viajado al extranjero?", "integer", { applies: isYes("travel_history.has_travel"), forms: ["IMM5257-SCHEDULE-1"] }),
 ];
 
 function repeatedChildren(answers: Answers): FieldDefinition[] {
@@ -143,20 +152,23 @@ function repeatedChildren(answers: Answers): FieldDefinition[] {
 }
 
 function repeatedEmployment(answers: Answers): FieldDefinition[] {
-  const raw = answers["employment.count"]?.value;
-  const count = typeof raw === "number" ? Math.min(raw, 20) : 0;
+  const cutoff = employmentCutoff();
   const result: FieldDefinition[] = [];
-  for (let index = 1; index <= count; index++) {
+  for (let index = 1; index <= 20; index++) {
     const p = `employment.${index}`;
+    const fromPrompt = index === 1
+      ? `💼 *Actividades de los últimos 10 años*\n\nComo parte del proceso de visa, el Gobierno de Canadá necesita conocer las actividades que has desempeñado durante los últimos 10 años: estudios, empleos, cambios de trabajo, desempleo, cuidado del hogar y tu ocupación actual.\n\nVamos a registrarlas *una por una*, comenzando con la actual o más reciente y avanzando hacia atrás. No necesitas calcular cuántos periodos son. Debemos cubrir desde *${cutoff.display}* hasta hoy, sin huecos.\n\n*Ejemplo con 2 periodos:*\n_${cutoff.example} a 01/2023 — Estudiante de Ingeniería_\n_02/2023 a ACTUAL — Trabajador remoto_\n\nComencemos con tu actividad actual o más reciente. ¿En qué mes y año comenzó? Usa MM/AAAA.`
+      : `💼 *Periodo ${index}*\n\nAhora registra la actividad inmediatamente anterior. Seguiremos retrocediendo hasta llegar a *${cutoff.display}*.\n\n¿En qué mes y año comenzó? Usa MM/AAAA.`;
     result.push(
-      field(`${p}.from`, "Empleo", `Inicio actividad ${index}`, `Actividad ${index}: ¿en qué mes y año comenzó? Usa MM/AAAA.`, "year_month"),
+      field(`${p}.from`, "Empleo", `Inicio actividad ${index}`, fromPrompt, "year_month"),
       field(`${p}.until`, "Empleo", `Fin actividad ${index}`, `Actividad ${index}: ¿en qué mes y año terminó? Si continúa, escribe ACTUAL.`, "year_month"),
       field(`${p}.activity`, "Empleo", `Actividad ${index}`, `Actividad ${index}: ¿cuál era tu ocupación o actividad?`),
       field(`${p}.organization`, "Empleo", `Organización ${index}`, `Actividad ${index}: ¿cuál era la empresa, institución o situación?`),
       field(`${p}.city`, "Empleo", `Ciudad actividad ${index}`, `Actividad ${index}: ¿en qué ciudad?`),
-      field(`${p}.country`, "Empleo", `País actividad ${index}`, `Actividad ${index}: ¿en qué país?`),
       field(`${p}.province`, "Empleo", `Provincia actividad ${index}`, `Actividad ${index}: ¿en qué estado o provincia? Si no aplica, escribe SALTAR.`, "text", { required: false }),
     );
+    const from = answers[`${p}.from`];
+    if (from?.status !== "CONFIRMED" || typeof from.value !== "string" || from.value <= cutoff.machine) break;
   }
   return result;
 }

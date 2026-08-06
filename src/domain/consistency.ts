@@ -19,13 +19,16 @@ function displayMonth(index: number): string {
 }
 
 export function employmentCoverageIssues(answers: Answers, referenceDate = new Date()): string[] {
-  const rawCount = answers["employment.count"]?.value;
-  if (typeof rawCount !== "number" || rawCount < 1) return ["Debe existir al menos una actividad para cubrir los últimos 10 años."];
+  const indexes = [...new Set(Object.keys(answers).flatMap((fieldId) => {
+    const match = fieldId.match(/^employment\.(\d+)\.(?:from|until)$/);
+    return match ? [Number(match[1])] : [];
+  }))].sort((left, right) => left - right);
+  if (!indexes.length) return ["Debe existir al menos una actividad para cubrir los últimos 10 años."];
   const current = referenceDate.getUTCFullYear() * 12 + referenceDate.getUTCMonth();
-  const targetStart = current - 119;
+  const targetStart = current - 120;
   const covered = new Set<number>();
   const issues: string[] = [];
-  for (let index = 1; index <= rawCount; index++) {
+  for (const index of indexes) {
     const fromText = textValue(answers, `employment.${index}.from`);
     const untilText = textValue(answers, `employment.${index}.until`);
     if (!fromText || !untilText) continue;
@@ -60,4 +63,3 @@ export function crossFieldIssues(answers: Answers, referenceDate = new Date()): 
   if (visitFrom && visitUntil && visitFrom > visitUntil) issues.push("La salida planeada de Canadá debe ser posterior a la llegada.");
   return [...issues, ...employmentCoverageIssues(answers, referenceDate)];
 }
-

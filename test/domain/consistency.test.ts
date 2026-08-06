@@ -8,8 +8,7 @@ const answer = (fieldId: string, value: string | number): Answer => ({ fieldId, 
 describe("cross-field consistency", () => {
   it("detects gaps in the required ten-year activity history", () => {
     const answers = {
-      "employment.count": answer("employment.count", 2),
-      "employment.1.from": answer("employment.1.from", "2016-09"),
+      "employment.1.from": answer("employment.1.from", "2016-08"),
       "employment.1.until": answer("employment.1.until", "2020-01"),
       "employment.2.from": answer("employment.2.from", "2020-03"),
       "employment.2.until": answer("employment.2.until", "CURRENT"),
@@ -20,8 +19,7 @@ describe("cross-field consistency", () => {
 
   it("accepts overlapping intervals that cover all ten years", () => {
     const answers = {
-      "employment.count": answer("employment.count", 2),
-      "employment.1.from": answer("employment.1.from", "2016-01"),
+      "employment.1.from": answer("employment.1.from", "2016-08"),
       "employment.1.until": answer("employment.1.until", "2021-06"),
       "employment.2.from": answer("employment.2.from", "2021-06"),
       "employment.2.until": answer("employment.2.until", "CURRENT"),
@@ -36,11 +34,9 @@ describe("cross-field consistency", () => {
       "passport.expiry_date": answer("passport.expiry_date", "2024-01-01"),
       "visit.from": answer("visit.from", "2027-06-01"),
       "visit.until": answer("visit.until", "2027-05-01"),
-      "employment.count": answer("employment.count", 1),
       "employment.1.from": answer("employment.1.from", "2010-01"),
       "employment.1.until": answer("employment.1.until", "CURRENT"),
     };
     assert.equal(crossFieldIssues(answers, new Date("2026-08-05T00:00:00Z")).length, 3);
   });
 });
-

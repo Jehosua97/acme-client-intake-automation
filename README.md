@@ -25,7 +25,7 @@ The solution turns that process into a persistent, auditable workflow while pres
 
 - The bot remains silent until the operator sends the exact command `INICIAR BOT` in an individual customer chat.
 - Unknown contacts, status messages, broadcasts, and groups receive no automated response.
-- The customer provides explicit consent before collection begins.
+- ACME obtains the customer's signed authorization before the operator starts the bot; the chat does not repeat that authorization step.
 - Questions are delivered one at a time and validated according to their data type.
 - Every response and conversation position is persisted, allowing interruption and recovery at any moment.
 - Customers can use `SALTAR`, `ALTO`/`PAUSA`/`PAUSAR`/`DETENTE`/`PARA`, `CONTINUAR`, `RESUMEN`, and `PENDIENTES`.
@@ -173,7 +173,7 @@ Supervisor and application logs are stored in `.data/logs/`.
 
 1. The operator opens an individual WhatsApp conversation.
 2. The operator sends `INICIAR BOT` from the linked account.
-3. The customer accepts the privacy notice with `ACEPTO`.
+3. The bot begins immediately because ACME already holds the signed authorization.
 4. The state engine asks only the next applicable question.
 5. A passport photo or PDF is queued and uploaded to the customer's Drive folder.
 6. Staff complete passport-derived fields manually from the dashboard.

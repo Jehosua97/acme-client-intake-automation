@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, it } from "node:test";
-import { handleClientText } from "../../src/domain/engine.js";
+import { startIntake } from "../../src/domain/engine.js";
 import { SQLiteStore } from "../../src/infrastructure/sqlite-store.js";
 
 describe("SQLiteStore", () => {
@@ -14,9 +14,9 @@ describe("SQLiteStore", () => {
       const caseRecord = store.createCase("5215550000000@c.us", "+5215550000000", "Ana Pérez");
       store.addChatAlias(caseRecord.id, "987654321@lid");
       assert.equal(store.getCaseByChatId("987654321@lid")?.id, caseRecord.id);
-      caseRecord.status = "AWAITING_CONSENT";
-      const accepted = handleClientText(caseRecord, "ACEPTO");
-      store.saveCase(accepted.caseRecord);
+      caseRecord.status = "INVITED";
+      const started = startIntake(caseRecord);
+      store.saveCase(started.caseRecord);
       store.setStaffAnswer(caseRecord.id, "identity.full_name", "Ana Pérez");
       const applicantAddress = "Calle Principal 10, Colonia Centro, Municipio de Veracruz, Veracruz, C.P. 91700";
       store.setStaffAnswer(caseRecord.id, "contact.residential_address", applicantAddress);

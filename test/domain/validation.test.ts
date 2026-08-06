@@ -31,6 +31,7 @@ describe("answer validation", () => {
 
   it("accepts current employment and validates month", () => {
     assert.deepEqual(validateAnswer(field("year_month"), "ACTUAL"), { ok: true, value: "CURRENT" });
+    assert.equal(validateAnswer(field("year_month", "employment.1.from"), "ACTUAL").ok, false);
     assert.equal(validateAnswer(field("year_month"), "13/2020").ok, false);
   });
 });

@@ -9,7 +9,6 @@ const fixedAlternateAddressIds = new Set([
   "partner.address",
   "mother.address",
   "father.address",
-  "visit.contact_address",
 ]);
 
 const normalize = (value: string) => value.trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -29,9 +28,9 @@ export function addressPrompt(basePrompt: string, fieldId: string, answers: Answ
   if (!isAlternateAddressField(fieldId)) return basePrompt;
   const currentAddress = applicantAddress(answers);
   const reference = currentAddress
-    ? `El domicilio que indicó el solicitante es: ${currentAddress}`
-    : "El domicilio del solicitante todavía está pendiente.";
-  return `${basePrompt}\n\n${reference}\nSi es la misma, escribe MISMA; si no, escribe la nueva dirección completa.`;
+    ? `*Domicilio del solicitante:*\n${currentAddress}`
+    : "*Domicilio del solicitante:* pendiente";
+  return `${basePrompt}\n\n${reference}\n\nSi es la misma, escribe *MISMA*. Si no, escribe la nueva dirección completa.`;
 }
 
 export type AddressResolution =

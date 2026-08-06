@@ -50,11 +50,11 @@ export function validateAnswer(field: FieldDefinition, raw: string): ValidationR
     }
     case "year_month": {
       const parsed = yearMonth(value);
+      if (parsed === "CURRENT" && field.id.endsWith(".from")) return { ok: false, message: "Para la fecha de inicio usa MM/AAAA." };
       return parsed ? { ok: true, value: parsed } : { ok: false, message: "Usa MM/AAAA. Si la actividad continúa actualmente, escribe ACTUAL." };
     }
     case "integer": {
       if (!/^\d{1,2}$/.test(value) || Number(value) > 20) return { ok: false, message: "Escribe un número entre 0 y 20." };
-      if (field.id === "employment.count" && Number(value) < 1) return { ok: false, message: "Necesitamos al menos un periodo para cubrir tus actividades de los últimos 10 años." };
       if (field.id === "travel_history.count" && Number(value) < 1) return { ok: false, message: "Como indicaste que sí viajaste, necesitamos registrar al menos un viaje." };
       return { ok: true, value: Number(value) };
     }

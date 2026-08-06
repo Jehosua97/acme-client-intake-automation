@@ -3,7 +3,7 @@ import QRCode from "qrcode";
 import WhatsAppWeb from "whatsapp-web.js";
 import type { Message } from "whatsapp-web.js";
 import type { Config } from "../config.js";
-import { acknowledgeInvitation, handleClientText, handlePassportDocument } from "../domain/engine.js";
+import { handleClientText, handlePassportDocument, startIntake } from "../domain/engine.js";
 import type { OutgoingMessage } from "../domain/types.js";
 import type { GoogleDriveService } from "./google-drive.js";
 import type { PendingDocument, SQLiteStore } from "./sqlite-store.js";
@@ -129,9 +129,9 @@ export class WhatsAppLocalService {
       if (existing && !["DRAFT", "DECLINED", "COMPLETE"].includes(existing.status)) {
         for (const alias of identity.aliases) this.store.addChatAlias(existing.id, alias);
         if (["INVITED", "AWAITING_CONSENT"].includes(existing.status)) {
-          const result = acknowledgeInvitation(existing);
+          const result = startIntake(existing);
           this.store.saveCase(result.caseRecord);
-          this.store.audit(existing.id, "CONSENT_REQUEST_RETRIED", { status: existing.status });
+          for (const event of result.auditEvents) this.store.audit(existing.id, event.event, event.detail);
           await this.sendAll(chatId, result.outgoing);
         } else {
           this.store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status });
@@ -146,9 +146,10 @@ export class WhatsAppLocalService {
       for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
       caseRecord.status = "INVITED";
       caseRecord.invitedAt = new Date().toISOString();
-      const result = acknowledgeInvitation(caseRecord);
+      const result = startIntake(caseRecord);
       this.store.saveCase(result.caseRecord);
       this.store.audit(caseRecord.id, "BOT_STARTED_FROM_CHAT", { chatId });
+      for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, event.detail);
       await this.sendAll(chatId, result.outgoing);
       if (messageId) this.store.markProcessed(messageId);
       this.runtime = { ...this.runtime, lastError: null };

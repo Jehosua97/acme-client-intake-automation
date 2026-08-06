@@ -1,14 +1,13 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { acknowledgeInvitation, calculateProgress, handleClientText, handlePassportDocument, invite, newCase } from "../../src/domain/engine.js";
+import { calculateClientProgress, calculateProgress, handleClientText, handlePassportDocument, invite, newCase, startIntake } from "../../src/domain/engine.js";
 import type { Answer, CaseRecord } from "../../src/domain/types.js";
 import { catalogFor, fieldById } from "../../src/domain/catalog.js";
 
-function consentedCase(): CaseRecord {
+function activeCase(): CaseRecord {
   const caseRecord = newCase("case-1", "+5215550000000");
   invite(caseRecord, "inicio", "es_MX");
-  acknowledgeInvitation(caseRecord);
-  handleClientText(caseRecord, "ACEPTO");
+  startIntake(caseRecord);
   return caseRecord;
 }
 
@@ -17,30 +16,29 @@ function confirmed(fieldId: string, value: Answer["value"]): Answer {
 }
 
 describe("conversation engine", () => {
-  it("requires invitation and explicit consent before the first question", () => {
+  it("starts the questionnaire immediately without asking for chat consent", () => {
     const caseRecord = newCase("case-1", "+5215550000000");
     const invitation = invite(caseRecord, "inicio", "es_MX");
     assert.equal(invitation.caseRecord.status, "INVITED");
     assert.equal(invitation.outgoing[0]?.type, "template");
 
-    const consent = handleClientText(caseRecord, "hola");
-    assert.equal(consent.caseRecord.status, "AWAITING_CONSENT");
-    assert.match(consent.outgoing[0]?.type === "text" ? consent.outgoing[0].body : "", /ACEPTO/);
-
-    const accepted = handleClientText(caseRecord, "ACEPTO");
-    assert.equal(accepted.caseRecord.status, "ACTIVE");
-    assert.equal(accepted.caseRecord.answers["contact.phone"]?.value, "+5215550000000");
-    assert.equal(accepted.caseRecord.currentFieldId, "workflow.passport_uploaded");
-    const overview = accepted.outgoing[0]?.type === "text" ? accepted.outgoing[0].body : "";
+    const started = handleClientText(caseRecord, "hola");
+    assert.equal(started.caseRecord.status, "ACTIVE");
+    assert.equal(started.caseRecord.answers["contact.phone"]?.value, "+5215550000000");
+    assert.equal(started.caseRecord.currentFieldId, "workflow.passport_uploaded");
+    assert.equal(started.caseRecord.consentVersion, null);
+    assert.equal(started.caseRecord.consentedAt, null);
+    const overview = started.outgoing[0]?.type === "text" ? started.outgoing[0].body : "";
     assert.match(overview, /30 y 45 minutos/);
     assert.match(overview, /5 bloques/);
-    assert.match(overview, /Familia: hasta 18 preguntas base/);
-    assert.match(overview, /ALTO, PAUSA, DETENTE o PARA/);
-    assert.match(overview, /distintos días/);
+    assert.doesNotMatch(overview, /familiar falleció/i);
+    assert.doesNotMatch(started.outgoing.map((message) => message.type === "text" ? message.body : "").join(" "), /ACEPTO|NO ACEPTO/);
+    assert.match(overview, /ALTO.*PAUSA.*DETENTE.*PARA/);
+    assert.match(overview, /varios días/);
   });
 
   it("prefills facts shared by Mexican-born clients living and applying in Mexico", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     const expected: Record<string, Answer["value"]> = {
       "identity.birth_country": "México",
       "identity.citizenship": "México",
@@ -51,6 +49,8 @@ describe("conversation engine", () => {
       "contact.residential_country": "México",
       "language.mother_tongue": "Español",
       "language.preferred": "Inglés",
+      "education.country": "México",
+      "employment.1.country": "México",
     };
     for (const [fieldId, value] of Object.entries(expected)) {
       assert.equal(caseRecord.answers[fieldId]?.value, value);
@@ -60,7 +60,7 @@ describe("conversation engine", () => {
   });
 
   it("does not immediately repeat a skipped question", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     handleClientText(caseRecord, "SALTAR"); // pasaporte pendiente
     handleClientText(caseRecord, "SALTAR"); // UCI opcional
     handleClientText(caseRecord, "Visa de visitante");
@@ -72,7 +72,7 @@ describe("conversation engine", () => {
   });
 
   it("uses one compact confirmation for passport proposals", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     const result = handlePassportDocument(caseRecord, "media-1", [
       { fieldId: "identity.full_name", value: "Ana María Pérez López", confidence: 99 },
     ]);
@@ -86,7 +86,7 @@ describe("conversation engine", () => {
   });
 
   it("leaves passport values for staff review without asking the client again", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     const result = handlePassportDocument(caseRecord, "drive-file-1", []);
     assert.equal(caseRecord.answers["identity.full_name"]?.status, "PENDING");
     assert.equal(caseRecord.answers["identity.full_name"]?.source, "DOCUMENT");
@@ -95,7 +95,7 @@ describe("conversation engine", () => {
   });
 
   it("never reopens passport fields through CONTINUAR", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     handlePassportDocument(caseRecord, "drive-file-1", []);
     caseRecord.status = "WAITING_FOR_CLIENT";
     caseRecord.currentFieldId = null;
@@ -106,7 +106,7 @@ describe("conversation engine", () => {
   });
 
   it("removes partner questions when the client has no partner", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     caseRecord.answers["family.has_partner"] = confirmed("family.has_partner", false);
     const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
     assert.equal(ids.has("partner.full_name"), false);
@@ -114,7 +114,7 @@ describe("conversation engine", () => {
   });
 
   it("infers deceased relatives from marital status and skips their remaining details", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     caseRecord.answers["mother.full_name"] = confirmed("mother.full_name", "María López");
     caseRecord.answers["mother.marital_status"] = confirmed("mother.marital_status", "FALLECIDO/A");
     caseRecord.answers["children.count"] = confirmed("children.count", 1);
@@ -131,7 +131,7 @@ describe("conversation engine", () => {
   });
 
   it("asks for the mother first and skips all remaining details when a parent is unknown", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     let ids = catalogFor(caseRecord.answers).map((field) => field.id);
     assert.ok(ids.indexOf("mother.full_name") < ids.indexOf("father.full_name"));
     assert.equal(ids.includes("mother.birth_date"), false);
@@ -153,7 +153,7 @@ describe("conversation engine", () => {
   });
 
   it("creates as many child records as declared", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     caseRecord.answers["children.count"] = confirmed("children.count", 2);
     const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
     assert.equal(ids.has("children.1.full_name"), true);
@@ -162,7 +162,7 @@ describe("conversation engine", () => {
   });
 
   it("asks for the applicant address before alternate addresses and copies it when the answer is MISMA", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     const applicantAddress = "Calle Principal 10, Colonia Centro, Municipio de Veracruz, Veracruz, C.P. 91700";
     caseRecord.answers["contact.residential_address"] = confirmed("contact.residential_address", applicantAddress);
     caseRecord.answers["family.has_partner"] = confirmed("family.has_partner", true);
@@ -173,31 +173,58 @@ describe("conversation engine", () => {
     const fields = catalogFor(caseRecord.answers);
     const ids = fields.map((field) => field.id);
     assert.ok(ids.indexOf("contact.residential_address") < ids.indexOf("contact.mailing_address"));
+    assert.ok(ids.indexOf("contact.mailing_address") < ids.indexOf("contact.email"));
+    assert.ok(ids.indexOf("contact.email") < ids.indexOf("family.marital_status"));
     assert.ok(ids.indexOf("contact.mailing_address") < ids.indexOf("partner.address"));
-    assert.match(fields.find((field) => field.id === "contact.residential_address")?.prompt ?? "", /Avenida de los Pinos 245/);
-    for (const fieldId of ["contact.mailing_address", "partner.address", "mother.address", "father.address", "children.1.address", "visit.contact_address"]) {
+    assert.match(fields.find((field) => field.id === "contact.residential_address")?.prompt ?? "", /_Ejemplo ficticio: Avenida de los Pinos 245.*_/);
+    for (const fieldId of ["contact.mailing_address", "partner.address", "mother.address", "father.address", "children.1.address"]) {
       const prompt = fields.find((field) => field.id === fieldId)?.prompt ?? "";
-      assert.match(prompt, /escribe MISMA/, fieldId);
+      assert.match(prompt, /escribe \*MISMA\*/, fieldId);
       assert.match(prompt, /Calle Principal 10/, fieldId);
       assert.match(prompt, /escribe la nueva dirección completa/, fieldId);
       assert.doesNotMatch(prompt, /nombre de la calle y número/, fieldId);
     }
+    const canadaAddressPrompt = fields.find((field) => field.id === "visit.contact_address")?.prompt ?? "";
+    assert.doesNotMatch(canadaAddressPrompt, /MISMA|Calle Principal 10/);
 
     caseRecord.currentFieldId = "partner.address";
     handleClientText(caseRecord, "MISMA");
     assert.equal(caseRecord.answers["partner.address"]?.value, applicantAddress);
   });
 
-  it("creates repeated employment activities instead of fixed form rows", () => {
-    const caseRecord = consentedCase();
-    caseRecord.answers["employment.count"] = confirmed("employment.count", 4);
-    const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
-    assert.equal(ids.has("employment.4.organization"), true);
-    assert.equal(ids.has("employment.5.organization"), false);
+  it("collects employment periods incrementally until the dynamic ten-year cutoff", () => {
+    const caseRecord = activeCase();
+    let fields = catalogFor(caseRecord.answers);
+    let ids = new Set(fields.map((field) => field.id));
+    assert.equal(ids.has("employment.count"), false);
+    assert.equal(ids.has("employment.1.from"), true);
+    assert.equal(ids.has("employment.2.from"), false);
+    assert.equal(ids.has("employment.1.country"), false);
+    const intro = fields.find((field) => field.id === "employment.1.from")?.prompt ?? "";
+    assert.match(intro, /agosto de 2016/);
+    assert.match(intro, /_08\/2016 a 01\/2023/);
+    assert.match(intro, /una por una/);
+
+    caseRecord.answers["employment.1.from"] = confirmed("employment.1.from", "2023-02");
+    fields = catalogFor(caseRecord.answers);
+    ids = new Set(fields.map((field) => field.id));
+    assert.equal(ids.has("employment.2.from"), true);
+
+    caseRecord.answers["employment.2.from"] = confirmed("employment.2.from", "2016-08");
+    ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
+    assert.equal(ids.has("employment.3.from"), false);
+  });
+
+  it("asks travel history in direct, client-friendly language", () => {
+    const caseRecord = activeCase();
+    caseRecord.answers["travel_history.has_travel"] = confirmed("travel_history.has_travel", true);
+    const fields = catalogFor(caseRecord.answers);
+    assert.equal(fields.find((field) => field.id === "travel_history.has_travel")?.prompt, "✈️ ¿Has viajado al extranjero? Responde Sí o No.");
+    assert.equal(fields.find((field) => field.id === "travel_history.count")?.prompt, "¿Cuántas veces has viajado al extranjero?");
   });
 
   it("pauses and resumes at the persisted field", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     const field = caseRecord.currentFieldId;
     const paused = handleClientText(caseRecord, "PAUSAR");
     assert.equal(paused.caseRecord.status, "PAUSED");
@@ -207,9 +234,20 @@ describe("conversation engine", () => {
     assert.equal(resumed.caseRecord.currentFieldId, field);
   });
 
+  it("continues normally days later even when the client never used a pause command", () => {
+    const caseRecord = activeCase();
+    handleClientText(caseRecord, "SALTAR");
+    const persistedField = caseRecord.currentFieldId;
+    caseRecord.updatedAt = new Date(Date.now() - 3 * 24 * 60 * 60 * 1_000).toISOString();
+    const resumed = handleClientText(caseRecord, "SALTAR");
+    assert.equal(caseRecord.status, "ACTIVE");
+    assert.notEqual(caseRecord.currentFieldId, persistedField);
+    assert.ok(resumed.outgoing.length > 0);
+  });
+
   it("accepts every advertised pause command without losing the current field", () => {
     for (const command of ["ALTO", "PAUSA", "PAUSAR", "DETENTE", "PARA"]) {
-      const caseRecord = consentedCase();
+      const caseRecord = activeCase();
       const field = caseRecord.currentFieldId;
       const paused = handleClientText(caseRecord, command);
       assert.equal(paused.caseRecord.status, "PAUSED", command);
@@ -222,7 +260,7 @@ describe("conversation engine", () => {
   });
 
   it("counts a skipped passport as a required pending item", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     const initial = calculateProgress(caseRecord);
     handleClientText(caseRecord, "SALTAR");
     const afterPassportSkip = calculateProgress(caseRecord);
@@ -232,13 +270,13 @@ describe("conversation engine", () => {
   });
 
   it("records a deletion request without deleting immediately", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
     const result = handleClientText(caseRecord, "BORRAR MIS DATOS");
     assert.equal(result.caseRecord.status, "DELETION_REQUESTED");
     assert.equal(result.auditEvents[0]?.event, "DELETION_REQUESTED");
   });
 
-  it("accepts a deletion request even before consent", () => {
+  it("accepts a deletion request before the questionnaire starts", () => {
     const caseRecord = newCase("case-1", "+5215550000000");
     invite(caseRecord, "inicio", "es_MX");
     const result = handleClientText(caseRecord, "BORRAR MIS DATOS");
@@ -246,7 +284,8 @@ describe("conversation engine", () => {
   });
 
   it("can complete the entire non-sensitive stage without looping", () => {
-    const caseRecord = consentedCase();
+    const caseRecord = activeCase();
+    let lastOutgoing = "";
     for (let turns = 0; turns < 400 && caseRecord.status === "ACTIVE"; turns++) {
       assert.notEqual(caseRecord.currentFieldId, null);
       if (caseRecord.currentFieldId === "__proposal_batch__") {
@@ -268,25 +307,21 @@ describe("conversation engine", () => {
       } else if (current.kind === "year_month") {
         value = current.id.endsWith(".until") ? "ACTUAL" : "01/2016";
       } else if (current.kind === "integer") {
-        value = current.id === "employment.count" ? "1" : "0";
+        value = "0";
       } else if (current.kind === "email") value = "cliente@example.com";
       else if (current.kind === "money") value = "5000";
       if (current.id === "workflow.passport_uploaded") {
-        handlePassportDocument(caseRecord, "drive-file-1", [
-          { fieldId: "identity.full_name", value: "Ana Pérez", confidence: 100 },
-          { fieldId: "identity.birth_date", value: "1990-01-01", confidence: 100 },
-          { fieldId: "identity.birth_city", value: "Ciudad", confidence: 100 },
-          { fieldId: "identity.birth_country", value: "México", confidence: 100 },
-          { fieldId: "identity.citizenship", value: "México", confidence: 100 },
-          { fieldId: "passport.issuing_country", value: "México", confidence: 100 },
-          { fieldId: "passport.issue_date", value: "2024-01-01", confidence: 100 },
-          { fieldId: "passport.expiry_date", value: "2034-01-01", confidence: 100 },
-        ]);
+        const result = handlePassportDocument(caseRecord, "drive-file-1", []);
+        lastOutgoing = result.outgoing.map((message) => message.type === "text" ? message.body : "").join("\n");
         continue;
       }
-      handleClientText(caseRecord, value);
+      const result = handleClientText(caseRecord, value);
+      lastOutgoing = result.outgoing.map((message) => message.type === "text" ? message.body : "").join("\n");
     }
-    assert.equal(caseRecord.status, "READY_FOR_REVIEW");
-    assert.equal(calculateProgress(caseRecord).percent, 100);
+    assert.equal(caseRecord.status, "NEEDS_STAFF_REVIEW");
+    assert.ok(calculateProgress(caseRecord).percent < 100);
+    assert.equal(calculateClientProgress(caseRecord).percent, 100);
+    assert.match(lastOutgoing, /preguntas están completas: 100%/);
+    assert.match(lastOutgoing, /No necesitas responder nada más/);
   });
 });
