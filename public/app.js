@@ -58,7 +58,9 @@ function renderClients(){
     const progress=el("td"),progressWrap=el("div","progress-cell"),track=el("div","mini-track"),bar=el("i");bar.style.width=`${client.progress.percent}%`;track.append(bar);progressWrap.append(track,el("b",null,`${client.progress.percent}%`));progress.append(progressWrap);
     const docs=el("td"),docWrap=el("div","doc-count");docWrap.append(el("span",null,"▱"),el("b",null,String(client.documentCount)));if(client.pendingDocumentCount)docWrap.append(el("span","badge review",`${client.pendingDocumentCount} pendiente`));docs.append(docWrap);
     const updated=el("td",null,new Date(client.updatedAt).toLocaleString("es-MX",{dateStyle:"medium",timeStyle:"short"}));
-    const action=el("td"),button=el("button","row-open","Abrir →");button.onclick=()=>openClient(client.id);action.append(button);
+    const action=el("td"),actionWrap=el("div","row-actions"),pdf=el("a","row-pdf","Descargar PDF"),button=el("button","row-open","Abrir →");
+    pdf.href=`/api/clients/${encodeURIComponent(client.id)}/pdf`;pdf.setAttribute("download","");pdf.onclick=(event)=>event.stopPropagation();
+    button.onclick=()=>openClient(client.id);actionWrap.append(pdf,button);action.append(actionWrap);
     row.append(identity,status,progress,docs,updated,action);row.ondblclick=()=>openClient(client.id);body.append(row);
   }
 }

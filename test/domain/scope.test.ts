@@ -47,6 +47,7 @@ it("excludes the questions removed from the client conversation", () => {
     "education.country",
     "employment.count",
     "employment.1.country",
+    "visit.contact_relationship",
   ]) {
     assert.equal(ids.has(excluded), false, `unexpected client question: ${excluded}`);
   }

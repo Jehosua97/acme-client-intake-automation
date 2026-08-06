@@ -68,7 +68,7 @@ describe("conversation engine", () => {
     handleClientText(caseRecord, "SALTAR"); // pasaporte pendiente
     assert.equal(caseRecord.currentFieldId, "identity.full_name");
     handleClientText(caseRecord, "Ana María Pérez López");
-    handleClientText(caseRecord, "SALTAR"); // UCI opcional
+    handleClientText(caseRecord, "No"); // nunca tramitó una visa canadiense; UCI no aplica
     handleClientText(caseRecord, "Visa de visitante");
     assert.equal(caseRecord.currentFieldId, "identity.birth_date");
     const result = handleClientText(caseRecord, "SALTAR");
@@ -121,6 +121,35 @@ describe("conversation engine", () => {
     const ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
     assert.equal(ids.has("partner.full_name"), false);
     assert.equal(ids.has("partner.birth_date"), false);
+  });
+
+  it("asks for UCI only after a previous Canadian visa application", () => {
+    const caseRecord = activeCase();
+    caseRecord.answers["application.has_previous_canada_visa"] = confirmed("application.has_previous_canada_visa", false);
+    let fields = catalogFor(caseRecord.answers);
+    assert.equal(fields.some((field) => field.id === "application.uci"), false);
+
+    caseRecord.answers["application.has_previous_canada_visa"] = confirmed("application.has_previous_canada_visa", true);
+    fields = catalogFor(caseRecord.answers);
+    const uci = fields.find((field) => field.id === "application.uci");
+    assert.ok(uci);
+    assert.equal(uci.required, true);
+    assert.match(uci.prompt, /número UCI/i);
+  });
+
+  it("collects resident contact details only when the client has one in Canada", () => {
+    const caseRecord = activeCase();
+    const contactFields = ["visit.contact_name", "visit.contact_address", "visit.contact_phone", "visit.contact_email"];
+    caseRecord.answers["visit.has_permanent_resident_contact"] = confirmed("visit.has_permanent_resident_contact", false);
+    let ids = new Set(catalogFor(caseRecord.answers).map((field) => field.id));
+    for (const fieldId of contactFields) assert.equal(ids.has(fieldId), false, fieldId);
+
+    caseRecord.answers["visit.has_permanent_resident_contact"] = confirmed("visit.has_permanent_resident_contact", true);
+    const fields = catalogFor(caseRecord.answers);
+    ids = new Set(fields.map((field) => field.id));
+    for (const fieldId of contactFields) assert.equal(ids.has(fieldId), true, fieldId);
+    assert.equal(ids.has("visit.contact_relationship"), false);
+    assert.match(fields.find((field) => field.id === "visit.contact_name")?.prompt ?? "", /nombres y apellidos/i);
   });
 
   it("infers deceased relatives from marital status and skips their remaining details", () => {
@@ -180,6 +209,7 @@ describe("conversation engine", () => {
     caseRecord.answers["father.full_name"] = confirmed("father.full_name", "Juan Pérez");
     caseRecord.answers["children.count"] = confirmed("children.count", 1);
     caseRecord.answers["children.1.marital_status"] = confirmed("children.1.marital_status", "Soltero/a");
+    caseRecord.answers["visit.has_permanent_resident_contact"] = confirmed("visit.has_permanent_resident_contact", true);
     const fields = catalogFor(caseRecord.answers);
     const ids = fields.map((field) => field.id);
     assert.ok(ids.indexOf("contact.residential_address") < ids.indexOf("contact.mailing_address"));
