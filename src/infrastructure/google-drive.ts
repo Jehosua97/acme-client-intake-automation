@@ -11,6 +11,18 @@ const GOOGLE_SCOPES = [DRIVE_SCOPE, GMAIL_SEND_SCOPE] as const;
 type OAuthClient = InstanceType<typeof google.auth.OAuth2>;
 type OAuthCredentials = Parameters<OAuthClient["setCredentials"]>[0];
 
+export function clientDriveFolderName(phoneValue: unknown, displayNameValue: unknown): string {
+  const phone = String(phoneValue ?? "").replace(/[^+\d]/g, "").slice(0, 30) || "Sin teléfono";
+  const rawName = String(displayNameValue ?? "").trim();
+  const nameIsOnlyPhone = rawName.replace(/[^+\d]/g, "") === phone;
+  const safeName = (rawName && !nameIsOnlyPhone ? rawName : "Nombre pendiente")
+    .replace(/[\\/:*?"<>|]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 100) || "Nombre pendiente";
+  return `${phone} - ${safeName}`;
+}
+
 export class GoogleDriveService {
   private readonly oauth: OAuthClient;
   private readonly tokenStore: EncryptedTokenStore;
@@ -128,6 +140,18 @@ export class GoogleDriveService {
     };
   }
 
+  async syncClientFolderName(clientId: string): Promise<void> {
+    if (!this.connected) return;
+    const folder = this.store.getDriveFolder(clientId);
+    if (!folder) return;
+    const details = this.store.getClientDetails(clientId);
+    if (!details) return;
+    const name = clientDriveFolderName(details.phoneE164, details.displayName);
+    const drive = google.drive({ version: "v3", auth: this.oauth });
+    await drive.files.update({ fileId: folder.id, requestBody: { name }, fields: "id,name" });
+    this.store.audit(clientId, "DRIVE_FOLDER_NAME_SYNCED", { name });
+  }
+
   private async ensureRootFolder(): Promise<{ id: string; link: string }> {
     const drive = google.drive({ version: "v3", auth: this.oauth });
     const storedId = this.store.getSetting("google_root_folder_id");
@@ -158,11 +182,10 @@ export class GoogleDriveService {
     const details = this.store.getClientDetails(clientId);
     if (!details) throw new Error("Cliente inexistente");
     const root = await this.ensureRootFolder();
-    const displayName = String(details.displayName || details.phoneE164 || "Cliente").replace(/[\\/:*?"<>|]/g, "_").slice(0, 80);
-    const phone = String(details.phoneE164 ?? "").replace(/[^+\d]/g, "");
+    const name = clientDriveFolderName(details.phoneE164, details.displayName);
     const drive = google.drive({ version: "v3", auth: this.oauth });
     const created = await drive.files.create({
-      requestBody: { name: `${displayName} - ${phone}`, mimeType: "application/vnd.google-apps.folder", parents: [root.id] },
+      requestBody: { name, mimeType: "application/vnd.google-apps.folder", parents: [root.id] },
       fields: "id,webViewLink",
     });
     if (!created.data.id) throw new Error("No fue posible crear la carpeta del cliente");

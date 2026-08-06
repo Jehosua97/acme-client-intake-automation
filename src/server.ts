@@ -159,7 +159,17 @@ app.put("/api/clients/:id/answers/:fieldId", async (request, reply) => {
   const body = z.object({ value: z.union([z.string(), z.number(), z.boolean()]) }).safeParse(request.body);
   if (!body.success) return reply.code(400).send({ error: "value es obligatorio" });
   const raw = typeof body.data.value === "boolean" ? (body.data.value ? "Sí" : "No") : String(body.data.value);
-  try { return { answer: store.setStaffAnswer(id, fieldId, raw) }; }
+  try {
+    const answer = store.setStaffAnswer(id, fieldId, raw);
+    if (fieldId === "identity.full_name") {
+      try { await drive.syncClientFolderName(id); }
+      catch (error) {
+        app.log.error(error);
+        store.audit(id, "DRIVE_FOLDER_NAME_SYNC_FAILED", { error: error instanceof Error ? error.message : String(error) });
+      }
+    }
+    return { answer };
+  }
   catch (error) {
     const message = (error as Error).message;
     if (message === "CLIENT_NOT_FOUND") return reply.code(404).send({ error: "Cliente no encontrado" });

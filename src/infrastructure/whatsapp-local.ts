@@ -226,10 +226,17 @@ export class WhatsAppLocalService {
         return;
       }
 
+      const previousFullName = caseRecord.answers["identity.full_name"]?.value;
       const result = handleClientText(caseRecord, message.body);
       this.store.saveCase(result.caseRecord);
       for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, event.detail);
       this.store.markProcessed(messageId);
+      const currentFullName = result.caseRecord.answers["identity.full_name"]?.value;
+      if (typeof currentFullName === "string" && currentFullName !== previousFullName) {
+        void this.drive.syncClientFolderName(caseRecord.id).catch((error) => {
+          this.store.audit(caseRecord.id, "DRIVE_FOLDER_NAME_SYNC_FAILED", { error: error instanceof Error ? error.message : String(error) });
+        });
+      }
       await this.sendAll(sourceChatId, result.outgoing);
     } catch (error) { this.setError(error, false); }
   }
