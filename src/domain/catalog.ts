@@ -70,8 +70,7 @@ const core: FieldDefinition[] = [
   field("contact.residential_address", "Residencia", "Domicilio actual completo", "🏠 *Domicilio actual*\n\n¿Cuál es tu domicilio actual completo?\n\nIncluye: calle y número, colonia, delegación o municipio, ciudad y código postal.\n\n_Ejemplo ficticio: Avenida de los Pinos 245, Colonia Costa Verde, Municipio de Boca del Río, Veracruz, C.P. 94294._"),
   field("contact.mailing_address", "Residencia", "Dirección postal completa", "¿Cuál es tu dirección completa para recibir correspondencia?"),
   field("contact.email", "Contacto", "Correo electrónico", "📧 ¿Cuál es tu correo electrónico?", "email"),
-  field("contact.phone", "Contacto", "Teléfono principal", "📱 ¿Cuál es tu teléfono principal con código de país?", "phone"),
-  field("contact.phone_type", "Contacto", "Tipo de teléfono", "¿Ese teléfono es celular, casa o trabajo?"),
+  field("contact.phone", "Contacto", "Teléfono celular", "📱 *Teléfono de contacto*\n\n¿Cuál es tu número de teléfono celular con código de país?\n\n_Ejemplo: +52 55 1234 5678_", "phone"),
 
   field("family.marital_status", "Familia", "Estado civil", "¿Cuál es tu estado civil actual?", "text", { forms: ["IMM5257", "IMM5707"] }),
   field("family.has_partner", "Familia", "Tiene pareja", "¿Tienes esposo/a, pareja de hecho o pareja conyugal actualmente? Sí o No.", "yes_no", { forms: ["IMM5257", "IMM5707"] }),
@@ -157,7 +156,7 @@ function repeatedEmployment(answers: Answers): FieldDefinition[] {
   for (let index = 1; index <= 20; index++) {
     const p = `employment.${index}`;
     const fromPrompt = index === 1
-      ? `💼 *Actividades de los últimos 10 años*\n\nComo parte del proceso de visa, el Gobierno de Canadá necesita conocer las actividades que has desempeñado durante los últimos 10 años: estudios, empleos, cambios de trabajo, desempleo, cuidado del hogar y tu ocupación actual.\n\nVamos a registrarlas *una por una*, comenzando con la actual o más reciente y avanzando hacia atrás. No necesitas calcular cuántos periodos son. Debemos cubrir desde *${cutoff.display}* hasta hoy, sin huecos.\n\n*Ejemplo con 2 periodos:*\n_${cutoff.example} a 01/2023 — Estudiante de Ingeniería_\n_02/2023 a ACTUAL — Trabajador remoto_\n\nComencemos con tu actividad actual o más reciente. ¿En qué mes y año comenzó? Usa MM/AAAA.`
+      ? `💼 *Actividades de los últimos 10 años*\n\nComo parte del proceso de visa, el Gobierno de Canadá necesita conocer las actividades que has desempeñado durante los últimos 10 años: estudios, empleos, cambios de trabajo, desempleo, cuidado del hogar y tu ocupación actual.\n\nVamos a registrarlas *una por una*, comenzando con la actual o más reciente y avanzando hacia atrás. Asegúrate de que no haya huecos de tiempo vacíos durante esos 10 años. Debemos cubrir desde *${cutoff.display}* hasta hoy.\n\n*Ejemplo con 2 periodos:*\n_${cutoff.example} a 01/2023 — Estudiante de Ingeniería_\n_02/2023 a ACTUAL — Trabajador remoto_\n\nComencemos con tu actividad actual o más reciente. ¿En qué mes y año comenzó? Usa MM/AAAA.`
       : `💼 *Periodo ${index}*\n\nAhora registra la actividad inmediatamente anterior. Seguiremos retrocediendo hasta llegar a *${cutoff.display}*.\n\n¿En qué mes y año comenzó? Usa MM/AAAA.`;
     result.push(
       field(`${p}.from`, "Empleo", `Inicio actividad ${index}`, fromPrompt, "year_month"),

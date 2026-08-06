@@ -20,7 +20,7 @@ Las preguntas se adaptan según tu pareja, hijos y los datos que conozcas de tus
 3️⃣ *Idiomas*
 
 4️⃣ *Estudios y actividades de los últimos 10 años*
-Las actividades se registran una por una; no necesitas saber de antemano cuántos periodos son.
+Las actividades se registran una por una. Asegúrate de que no haya huecos de tiempo vacíos durante esos 10 años.
 
 5️⃣ *Viaje a Canadá e historial de viajes*
 
@@ -35,6 +35,7 @@ const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]>
   ["residence.applying_from_current", true],
   ["contact.mailing_country", "México"],
   ["contact.residential_country", "México"],
+  ["contact.phone_type", "Celular"],
   ["language.mother_tongue", "Español"],
   ["language.preferred", "Inglés"],
   ["education.country", "México"],
@@ -237,9 +238,6 @@ export function startIntake(caseRecord: CaseRecord): EngineResult {
   caseRecord.status = "ACTIVE";
   caseRecord.consentVersion = null;
   caseRecord.consentedAt = null;
-  if (/^\+\d{7,15}$/.test(caseRecord.phoneE164)) {
-    setAnswer(caseRecord, "contact.phone", caseRecord.phoneE164, "CONFIRMED", "SYSTEM", 100);
-  }
   const defaultedFields = applyMexicoProfileDefaults(caseRecord);
   caseRecord.updatedAt = now();
   return {

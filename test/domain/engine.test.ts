@@ -24,7 +24,8 @@ describe("conversation engine", () => {
 
     const started = handleClientText(caseRecord, "hola");
     assert.equal(started.caseRecord.status, "ACTIVE");
-    assert.equal(started.caseRecord.answers["contact.phone"]?.value, "+5215550000000");
+    assert.equal(started.caseRecord.answers["contact.phone"], undefined);
+    assert.equal(started.caseRecord.answers["contact.phone_type"]?.value, "Celular");
     assert.equal(started.caseRecord.currentFieldId, "workflow.passport_uploaded");
     assert.equal(started.caseRecord.consentVersion, null);
     assert.equal(started.caseRecord.consentedAt, null);
@@ -35,6 +36,8 @@ describe("conversation engine", () => {
     assert.doesNotMatch(started.outgoing.map((message) => message.type === "text" ? message.body : "").join(" "), /ACEPTO|NO ACEPTO/);
     assert.match(overview, /ALTO.*PAUSA.*DETENTE.*PARA/);
     assert.match(overview, /varios días/);
+    assert.match(overview, /no haya huecos de tiempo vacíos durante esos 10 años/i);
+    assert.doesNotMatch(overview, /de antemano cuántos periodos/i);
   });
 
   it("prefills facts shared by Mexican-born clients living and applying in Mexico", () => {
@@ -47,6 +50,7 @@ describe("conversation engine", () => {
       "residence.applying_from_current": true,
       "contact.mailing_country": "México",
       "contact.residential_country": "México",
+      "contact.phone_type": "Celular",
       "language.mother_tongue": "Español",
       "language.preferred": "Inglés",
       "education.country": "México",
@@ -174,6 +178,8 @@ describe("conversation engine", () => {
     const ids = fields.map((field) => field.id);
     assert.ok(ids.indexOf("contact.residential_address") < ids.indexOf("contact.mailing_address"));
     assert.ok(ids.indexOf("contact.mailing_address") < ids.indexOf("contact.email"));
+    assert.ok(ids.indexOf("contact.email") < ids.indexOf("contact.phone"));
+    assert.ok(ids.indexOf("contact.phone") < ids.indexOf("family.marital_status"));
     assert.ok(ids.indexOf("contact.email") < ids.indexOf("family.marital_status"));
     assert.ok(ids.indexOf("contact.mailing_address") < ids.indexOf("partner.address"));
     assert.match(fields.find((field) => field.id === "contact.residential_address")?.prompt ?? "", /_Ejemplo ficticio: Avenida de los Pinos 245.*_/);
@@ -204,6 +210,8 @@ describe("conversation engine", () => {
     assert.match(intro, /agosto de 2016/);
     assert.match(intro, /_08\/2016 a 01\/2023/);
     assert.match(intro, /una por una/);
+    assert.match(intro, /no haya huecos de tiempo vacíos durante esos 10 años/i);
+    assert.doesNotMatch(intro, /calcular cuántos periodos|de antemano/i);
 
     caseRecord.answers["employment.1.from"] = confirmed("employment.1.from", "2023-02");
     fields = catalogFor(caseRecord.answers);
@@ -309,6 +317,7 @@ describe("conversation engine", () => {
       } else if (current.kind === "integer") {
         value = "0";
       } else if (current.kind === "email") value = "cliente@example.com";
+      else if (current.kind === "phone") value = "+52 55 1234 5678";
       else if (current.kind === "money") value = "5000";
       if (current.id === "workflow.passport_uploaded") {
         const result = handlePassportDocument(caseRecord, "drive-file-1", []);
