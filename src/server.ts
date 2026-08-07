@@ -33,6 +33,7 @@ const STATUS_LABELS: Record<CaseStatus, string> = {
   AWAITING_CONSENT: "Esperando consentimiento",
   ACTIVE: "En proceso",
   PAUSED: "Pausado",
+  STOPPED_BY_ADMIN: "Detenido por administrador",
   WAITING_FOR_CLIENT: "Esperando cliente",
   NEEDS_STAFF_REVIEW: "Revisión necesaria",
   READY_FOR_REVIEW: "Listo para revisar",

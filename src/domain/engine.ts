@@ -13,7 +13,7 @@ const INTAKE_OVERVIEW = `👋 *Así será el proceso*
 Normalmente toma entre 30 y 45 minutos en total y está dividido en 5 bloques:
 
 1️⃣ *Datos personales, residencia y contacto*
-Varios datos se tomarán directamente de tu pasaporte.
+Primero guardaremos de forma segura la imagen de tu pasaporte y después te pediremos los datos que aparecen en él.
 
 2️⃣ *Familia*
 Las preguntas se adaptan según tu pareja, hijos y los datos que conozcas de tus padres.
@@ -41,15 +41,13 @@ const MEXICO_PROFILE_DEFAULTS: ReadonlyArray<readonly [string, Answer["value"]]>
   ["language.preferred", "Inglés"],
   ["education.country", "México"],
 ];
-const PASSPORT_MANUAL_REVIEW_FIELDS = [
+const CLIENT_PASSPORT_FIELDS = new Set<string>([
   "identity.birth_date",
   "identity.birth_city",
-  "identity.birth_country",
-  "identity.citizenship",
   "passport.issuing_country",
   "passport.issue_date",
   "passport.expiry_date",
-] as const;
+]);
 
 const now = () => new Date().toISOString();
 const text = (body: string): OutgoingMessage => ({ type: "text", body });
@@ -125,7 +123,7 @@ function clientApplicableFields(caseRecord: CaseRecord): FieldDefinition[] {
   return catalogFor(caseRecord.answers).filter((field) => {
     if (!field.required) return false;
     const answer = caseRecord.answers[field.id];
-    return !(answer?.status === "PENDING" && answer.source === "DOCUMENT");
+    return !(answer?.status === "PENDING" && answer.source === "DOCUMENT" && !CLIENT_PASSPORT_FIELDS.has(field.id));
   });
 }
 
@@ -164,14 +162,18 @@ function summary(caseRecord: CaseRecord): string {
 function pendingSummary(caseRecord: CaseRecord): string {
   const fields = unresolved(caseRecord).filter((field) => {
     const answer = caseRecord.answers[field.id];
-    return answer?.status === "CONFLICT" || (answer?.status === "PENDING" && answer.source !== "DOCUMENT");
+    return answer?.status === "CONFLICT"
+      || (answer?.status === "PENDING" && (answer.source !== "DOCUMENT" || CLIENT_PASSPORT_FIELDS.has(field.id)));
   });
   if (!fields.length) return "No tienes datos marcados como pendientes.";
   return `Pendientes (${fields.length}):\n${fields.slice(0, 12).map((field) => `• ${field.label}`).join("\n")}${fields.length > 12 ? "\n• …" : ""}`;
 }
 
 function nextMissing(caseRecord: CaseRecord): FieldDefinition | undefined {
-  return catalogFor(caseRecord.answers).find((field) => !caseRecord.answers[field.id]);
+  return catalogFor(caseRecord.answers).find((field) => {
+    const answer = caseRecord.answers[field.id];
+    return !answer || (CLIENT_PASSPORT_FIELDS.has(field.id) && answer.status === "PENDING" && answer.source === "DOCUMENT");
+  });
 }
 
 function proposedFields(caseRecord: CaseRecord): FieldDefinition[] {
@@ -224,7 +226,7 @@ function advance(caseRecord: CaseRecord): OutgoingMessage[] {
   if (progress.pending > 0) {
     const hasClientPending = unresolved(caseRecord).some((field) => {
       const answer = caseRecord.answers[field.id];
-      return answer?.status === "PENDING" && answer.source !== "DOCUMENT";
+      return answer?.status === "PENDING" && (answer.source !== "DOCUMENT" || CLIENT_PASSPORT_FIELDS.has(field.id));
     });
     if (!hasClientPending) {
       caseRecord.status = "NEEDS_STAFF_REVIEW";
@@ -269,6 +271,34 @@ export function startIntake(caseRecord: CaseRecord): EngineResult {
   };
 }
 
+export function hasPendingClientPassportQuestions(caseRecord: CaseRecord): boolean {
+  return catalogFor(caseRecord.answers).some((field) => {
+    if (!CLIENT_PASSPORT_FIELDS.has(field.id)) return false;
+    const answer = caseRecord.answers[field.id];
+    return !answer || answer.status !== "CONFIRMED";
+  });
+}
+
+export function stopIntakeByAdmin(caseRecord: CaseRecord): EngineResult {
+  caseRecord.status = "STOPPED_BY_ADMIN";
+  caseRecord.updatedAt = now();
+  return {
+    caseRecord,
+    outgoing: [],
+    auditEvents: [{ event: "CASE_STOPPED_BY_ADMIN", detail: {} }],
+  };
+}
+
+export function resumeIntakeByAdmin(caseRecord: CaseRecord): EngineResult {
+  caseRecord.status = "ACTIVE";
+  caseRecord.updatedAt = now();
+  return {
+    caseRecord,
+    outgoing: advance(caseRecord),
+    auditEvents: [{ event: "CASE_RESUMED_BY_ADMIN", detail: {} }],
+  };
+}
+
 export function applyProposals(
   caseRecord: CaseRecord,
   proposals: Array<{ fieldId: string; value: string | number | boolean; confidence: number }>,
@@ -303,12 +333,8 @@ export function handlePassportDocument(
 ): EngineResult {
   const defaultedFields = applyMexicoProfileDefaults(caseRecord);
   setAnswer(caseRecord, "workflow.passport_uploaded", documentId, "CONFIRMED", "DOCUMENT", 100);
-  // Phase one deliberately has no OCR/AI. Passport facts remain pending for
-  // staff review, but the client's complete name is requested in chat so the
-  // dashboard can identify the case immediately.
-  for (const fieldId of PASSPORT_MANUAL_REVIEW_FIELDS) {
-    if (!caseRecord.answers[fieldId]) setAnswer(caseRecord, fieldId, null, "PENDING", "DOCUMENT");
-  }
+  // Phase one deliberately has no OCR/AI. The file is stored first and the
+  // client then confirms the passport facts directly in the conversation.
   const result = applyProposals(caseRecord, proposals, "DOCUMENT");
   if (defaultedFields.length) result.auditEvents.unshift({ event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } });
   result.auditEvents.unshift({ event: "PASSPORT_RECEIVED", detail: { documentId, proposals: proposals.length } });
@@ -420,6 +446,12 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
     if (["sí", "si", "s", "yes"].includes(command)) resolvedValue = caseRecord.phoneE164;
     else if (["no", "n"].includes(command)) {
       return { caseRecord, outgoing: [text("De acuerdo. Escribe el otro número que deseas usar, incluyendo el código de país.")], auditEvents };
+    }
+  }
+  if (current.id === "passport.issuing_country") {
+    if (["sí", "si", "s", "yes"].includes(command)) resolvedValue = "México";
+    else if (["no", "n"].includes(command)) {
+      return { caseRecord, outgoing: [text("De acuerdo. Escribe el nombre del país que emitió tu pasaporte.")], auditEvents };
     }
   }
   const validation = validateAnswer(current, resolvedValue);

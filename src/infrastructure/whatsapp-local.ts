@@ -3,21 +3,25 @@ import QRCode from "qrcode";
 import WhatsAppWeb from "whatsapp-web.js";
 import type { Message } from "whatsapp-web.js";
 import type { Config } from "../config.js";
-import { handleClientText, handlePassportDocument, startIntake } from "../domain/engine.js";
-import type { OutgoingMessage } from "../domain/types.js";
+import { handleClientText, handlePassportDocument, hasPendingClientPassportQuestions, resumeIntakeByAdmin, startIntake, stopIntakeByAdmin } from "../domain/engine.js";
+import type { CaseRecord, OutgoingMessage } from "../domain/types.js";
 import type { GoogleDriveService } from "./google-drive.js";
 import type { FullBackupService } from "./full-backup.js";
 import type { PendingDocument, SQLiteStore } from "./sqlite-store.js";
 
 const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
+const BOT_START_COMMAND = "INICIAR BOT";
+const BOT_STOP_COMMAND = "DETENER BOT";
 const FULL_BACKUP_COMMAND = "HACER RESPALDO BACKUP";
 const { Client, LocalAuth } = WhatsAppWeb;
 
 const phoneDigits = (value: string) => value.replace(/\D/g, "");
 
-export function isAuthorizedBackupPhone(resolvedPhone: string, configuredPhone: string): boolean {
+export function isAuthorizedCommandPhone(resolvedPhone: string, configuredPhone: string): boolean {
   return Boolean(configuredPhone) && phoneDigits(resolvedPhone) === phoneDigits(configuredPhone);
 }
+
+export const isAuthorizedBackupPhone = isAuthorizedCommandPhone;
 
 function serializedText(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) return value;
@@ -127,12 +131,13 @@ export class WhatsAppLocalService {
   }
 
   private async handleOwnerMessage(message: Message): Promise<void> {
-    let commandReceived = false;
+    let commandReceived: string | null = null;
     let chatId: string | null = null;
     const messageId = normalizeWhatsAppMessageId(message.id);
     try {
-      if (message.body.trim().toLocaleUpperCase("es") !== "INICIAR BOT" || message.isStatus) return;
-      commandReceived = true;
+      const command = message.body.trim().toLocaleUpperCase("es");
+      if (![BOT_START_COMMAND, BOT_STOP_COMMAND].includes(command) || message.isStatus) return;
+      commandReceived = command;
       if (messageId && this.store.isProcessed(messageId)) return;
       const rawMessageId = message.id as unknown;
       const remoteFromId = rawMessageId && typeof rawMessageId === "object"
@@ -144,44 +149,90 @@ export class WhatsAppLocalService {
         if (messageId) this.store.markProcessed(messageId);
         return;
       }
-      this.store.audit(null, "BOT_START_COMMAND_RECEIVED", { chatId, messageId });
       const identity = await this.resolveChatIdentity(chatId, [remoteFromId, serializedText(message.to)]);
-      const existing = this.store.getCaseByChatId(chatId);
-      if (existing && !["DRAFT", "DECLINED", "COMPLETE"].includes(existing.status)) {
-        for (const alias of identity.aliases) this.store.addChatAlias(existing.id, alias);
-        if (["INVITED", "AWAITING_CONSENT"].includes(existing.status)) {
-          const result = startIntake(existing);
-          this.store.saveCase(result.caseRecord);
-          for (const event of result.auditEvents) this.store.audit(existing.id, event.event, event.detail);
-          await this.sendAll(chatId, result.outgoing);
-        } else {
-          this.store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status });
-          await this.client.sendMessage(chatId, "Tu expediente ya está iniciado y conserva todo el avance. El cliente puede responder la pregunta pendiente o pedir un resumen.");
-        }
-        if (messageId) this.store.markProcessed(messageId);
-        this.runtime = { ...this.runtime, lastError: null };
-        return;
+      if (command === BOT_STOP_COMMAND) {
+        await this.stopCaseByAdmin(chatId, identity);
+      } else {
+        await this.startOrResumeCase(chatId, identity, "OWNER");
       }
-      const displayName = identity.phone || "Cliente de WhatsApp";
-      const caseRecord = existing ?? this.store.createCase(chatId, identity.phone, displayName);
-      for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
-      caseRecord.status = "INVITED";
-      caseRecord.invitedAt = new Date().toISOString();
-      const result = startIntake(caseRecord);
-      this.store.saveCase(result.caseRecord);
-      this.store.audit(caseRecord.id, "BOT_STARTED_FROM_CHAT", { chatId });
-      for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, event.detail);
-      await this.sendAll(chatId, result.outgoing);
       if (messageId) this.store.markProcessed(messageId);
       this.runtime = { ...this.runtime, lastError: null };
     } catch (error) {
-      if (commandReceived) this.store.audit(null, "BOT_START_COMMAND_FAILED", {
+      if (commandReceived) this.store.audit(null, "BOT_ADMIN_COMMAND_FAILED", {
+        command: commandReceived,
         chatId,
         messageId,
         error: error instanceof Error ? error.message : String(error),
       });
       this.setError(error, false);
     }
+  }
+
+  private caseForIdentity(chatId: string, identity: ChatIdentity): CaseRecord | null {
+    let caseRecord = this.store.getCaseByChatId(chatId);
+    if (!caseRecord) {
+      for (const alias of identity.aliases) {
+        caseRecord = this.store.getCaseByChatId(alias);
+        if (caseRecord) break;
+      }
+    }
+    if (caseRecord) for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
+    return caseRecord;
+  }
+
+  private async stopCaseByAdmin(chatId: string, identity: ChatIdentity): Promise<void> {
+    const caseRecord = this.caseForIdentity(chatId, identity);
+    if (!caseRecord) {
+      this.store.audit(null, "BOT_STOP_WITHOUT_CASE_IGNORED", { chatId });
+      return;
+    }
+    if (["NEEDS_STAFF_REVIEW", "READY_FOR_REVIEW", "COMPLETE", "DECLINED", "DELETION_REQUESTED"].includes(caseRecord.status)) {
+      this.store.audit(caseRecord.id, "BOT_STOP_IGNORED_FOR_CLOSED_CASE", { status: caseRecord.status });
+      return;
+    }
+    const result = stopIntakeByAdmin(caseRecord);
+    this.store.saveCase(result.caseRecord);
+    for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, { ...event.detail, chatId });
+  }
+
+  private async startOrResumeCase(chatId: string, identity: ChatIdentity, initiatedBy: "OWNER" | "TEST_PHONE"): Promise<void> {
+    const existing = this.caseForIdentity(chatId, identity);
+    if (existing) {
+      let result: ReturnType<typeof startIntake> | null = null;
+      if (["DRAFT", "INVITED", "AWAITING_CONSENT"].includes(existing.status)) {
+        result = startIntake(existing);
+      } else if (existing.status === "PAUSED") {
+        result = handleClientText(existing, "CONTINUAR");
+      } else if ((existing.status === "STOPPED_BY_ADMIN" && initiatedBy === "OWNER")
+        || (existing.status === "NEEDS_STAFF_REVIEW" && hasPendingClientPassportQuestions(existing))) {
+        result = resumeIntakeByAdmin(existing);
+      }
+      if (result) {
+        this.store.saveCase(result.caseRecord);
+        this.store.audit(existing.id, "BOT_STARTED_OR_RESUMED_FROM_CHAT", { chatId, initiatedBy });
+        for (const event of result.auditEvents) this.store.audit(existing.id, event.event, event.detail);
+        await this.sendAll(chatId, result.outgoing);
+        return;
+      }
+      if (existing.status === "STOPPED_BY_ADMIN") {
+        this.store.audit(existing.id, "TEST_PHONE_START_IGNORED_AFTER_ADMIN_STOP", { initiatedBy });
+        return;
+      }
+      this.store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status, initiatedBy });
+      await this.client.sendMessage(chatId, "Tu expediente ya está iniciado y conserva todo el avance. El cliente puede responder la pregunta pendiente o pedir un resumen.");
+      return;
+    }
+
+    const displayName = identity.phone || "Cliente de WhatsApp";
+    const caseRecord = this.store.createCase(chatId, identity.phone, displayName);
+    for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
+    caseRecord.status = "INVITED";
+    caseRecord.invitedAt = new Date().toISOString();
+    const result = startIntake(caseRecord);
+    this.store.saveCase(result.caseRecord);
+    this.store.audit(caseRecord.id, "BOT_STARTED_FROM_CHAT", { chatId, initiatedBy });
+    for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, event.detail);
+    await this.sendAll(chatId, result.outgoing);
   }
 
   private async handleClientMessage(message: Message): Promise<void> {
@@ -210,6 +261,18 @@ export class WhatsAppLocalService {
         this.store.markProcessed(messageId);
         return;
       }
+      if (message.body.trim().toLocaleUpperCase("es") === BOT_START_COMMAND) {
+        const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
+        const authorized = isAuthorizedCommandPhone(identity.phone, this.config.TEST_SELF_START_PHONE);
+        this.store.markProcessed(messageId);
+        if (!authorized) {
+          this.store.audit(null, "CLIENT_START_COMMAND_REJECTED", { sourceChatId, resolvedPhone: identity.phone || null });
+          return;
+        }
+        this.store.audit(null, "TEST_PHONE_START_COMMAND_RECEIVED", { sourceChatId, resolvedPhone: identity.phone });
+        await this.startOrResumeCase(sourceChatId, identity, "TEST_PHONE");
+        return;
+      }
       if (message.body.trim().toLocaleUpperCase("es") === FULL_BACKUP_COMMAND) {
         const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
         const authorized = isAuthorizedBackupPhone(identity.phone, this.config.BACKUP_ADMIN_PHONE);
@@ -231,6 +294,10 @@ export class WhatsAppLocalService {
         if (caseRecord) for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
       }
       if (!caseRecord) { this.store.markProcessed(messageId); return; }
+      if (caseRecord.status === "STOPPED_BY_ADMIN") {
+        this.store.markProcessed(messageId);
+        return;
+      }
       if (["NEEDS_STAFF_REVIEW", "READY_FOR_REVIEW", "COMPLETE", "DECLINED", "DELETION_REQUESTED"].includes(caseRecord.status)) {
         // The WhatsApp connection is global, but closed case content is neither
         // persisted nor processed once the source chat has been identified.
@@ -394,10 +461,10 @@ export class WhatsAppLocalService {
       // getChats()/message.getChat() currently throws for some WhatsApp LID
       // records. Searching only the activation phrase avoids serializing every
       // chat and lets a recent command survive an application restart.
-      const messages = await this.client.searchMessages("INICIAR BOT", { limit: 25 });
+      const messages = await this.client.searchMessages(BOT_START_COMMAND, { limit: 25 });
       for (const message of messages) {
         if (!message.fromMe || message.isStatus || message.timestamp < cutoff) continue;
-        if (message.body.trim().toLocaleUpperCase("es") !== "INICIAR BOT") continue;
+        if (message.body.trim().toLocaleUpperCase("es") !== BOT_START_COMMAND) continue;
         const messageId = normalizeWhatsAppMessageId(message.id);
         if (messageId && this.store.isProcessed(messageId)) continue;
         this.store.audit(null, "RECENT_START_COMMAND_RECOVERED", {

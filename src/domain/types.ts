@@ -4,6 +4,7 @@ export const CASE_STATUSES = [
   "AWAITING_CONSENT",
   "ACTIVE",
   "PAUSED",
+  "STOPPED_BY_ADMIN",
   "WAITING_FOR_CLIENT",
   "NEEDS_STAFF_REVIEW",
   "READY_FOR_REVIEW",
@@ -69,4 +70,3 @@ export interface Progress {
   conflicts: number;
   percent: number;
 }
-

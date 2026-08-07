@@ -46,17 +46,18 @@ const field = (
 const core: FieldDefinition[] = [
   field("workflow.passport_uploaded", "Inicio", "Pasaporte recibido", "📘 *Comencemos con tu pasaporte*\n\nEnvíame una foto clara o un PDF de la página donde aparecen tus datos.\n\nSi no lo tienes en este momento, escribe *SALTAR* y quedará pendiente.", "text", { forms: ["INTERNAL"] }),
   field("identity.full_name", "Datos personales", "Nombre completo", "👤 *Nombre del solicitante*\n\n¿Cuál es tu nombre completo, incluyendo todos tus nombres y apellidos, tal como aparece en tu pasaporte?", "text", { forms: ["IMM5257", "IMM5707"] }),
-  field("application.has_previous_canada_visa", "Inicio", "Trámite canadiense anterior", "🍁 ¿Ya has tramitado alguna vez una visa canadiense? Responde Sí o No.", "yes_no"),
-  field("application.uci", "Inicio", "UCI", "¿Cuál es tu número UCI de Canadá? Si no lo conoces en este momento, escribe SALTAR y quedará pendiente.", "text", { applies: isYes("application.has_previous_canada_visa") }),
-  field("application.visa_type", "Inicio", "Tipo de visa", "¿El trámite es para una visa de visitante (turista) o una visa de tránsito?"),
-  field("identity.birth_date", "Datos personales", "Fecha de nacimiento", "¿Cuál es tu fecha de nacimiento? Usa DD/MM/AAAA.", "date", { forms: ["IMM5257", "IMM5707"] }),
-  field("identity.birth_city", "Datos personales", "Ciudad de nacimiento", "¿En qué ciudad o pueblo naciste?"),
+  field("identity.birth_date", "Datos personales", "Fecha de nacimiento", "📅 *Datos de tu pasaporte*\n\n¿Cuál es tu fecha de nacimiento tal como aparece en tu pasaporte?\n\nUsa el formato *DD/MM/AAAA*.", "date", { forms: ["IMM5257", "IMM5707"] }),
+  field("identity.birth_city", "Datos personales", "Ciudad de nacimiento", "🏙️ ¿Cuál es tu ciudad o localidad de nacimiento tal como aparece en tu pasaporte?"),
   field("identity.birth_country", "Datos personales", "País de nacimiento", "¿En qué país o territorio naciste?", "text", { forms: ["IMM5257", "IMM5707"] }),
   field("identity.citizenship", "Datos personales", "Ciudadanía", "¿Cuál es tu ciudadanía actual?"),
 
-  field("passport.issuing_country", "Pasaporte", "País emisor", "¿Qué país o territorio emitió tu pasaporte?"),
-  field("passport.issue_date", "Pasaporte", "Fecha de emisión", "¿Cuál es la fecha de emisión de tu pasaporte? Usa DD/MM/AAAA.", "date"),
-  field("passport.expiry_date", "Pasaporte", "Fecha de vencimiento", "¿Cuál es la fecha de vencimiento de tu pasaporte? Usa DD/MM/AAAA.", "date"),
+  field("passport.issuing_country", "Pasaporte", "País emisor", "🇲🇽 *País emisor del pasaporte*\n\n¿Tu pasaporte fue emitido por México?\n\nResponde *Sí*. Si fue emitido por otro país, escribe directamente el nombre de ese país."),
+  field("passport.issue_date", "Pasaporte", "Fecha de emisión", "📘 ¿Cuál es la *fecha de emisión* de tu pasaporte?\n\nUsa el formato *DD/MM/AAAA*.", "date"),
+  field("passport.expiry_date", "Pasaporte", "Fecha de vencimiento", "📕 ¿Cuál es la *fecha de vencimiento* de tu pasaporte?\n\nUsa el formato *DD/MM/AAAA*.", "date"),
+
+  field("application.has_previous_canada_visa", "Inicio", "Trámite canadiense anterior", "🍁 ¿Ya has tramitado alguna vez una visa canadiense? Responde Sí o No.", "yes_no"),
+  field("application.uci", "Inicio", "UCI", "¿Cuál es tu número UCI de Canadá? Si no lo conoces en este momento, escribe SALTAR y quedará pendiente.", "text", { applies: isYes("application.has_previous_canada_visa") }),
+  field("application.visa_type", "Inicio", "Tipo de visa", "¿El trámite es para una visa de visitante (turista) o una visa de tránsito?"),
 
   field("residence.current_country", "Residencia", "País de residencia", "¿En qué país vives actualmente?"),
   field("residence.current_status", "Residencia", "Estatus actual", "¿Qué estatus tienes ahí? Por ejemplo: ciudadanía, residencia permanente, trabajo, estudios o visita."),

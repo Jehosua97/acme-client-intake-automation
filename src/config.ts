@@ -15,6 +15,7 @@ const schema = z.object({
   WHATSAPP_BROWSER_VISIBLE: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
   WHATSAPP_SESSION_ID: z.string().regex(/^[a-zA-Z0-9_-]+$/).default("acme-client-intake"),
   WHATSAPP_DEVICE_NAME: z.string().trim().min(1).max(100).default("MultiServicios Client Intake"),
+  TEST_SELF_START_PHONE: z.string().trim().refine((value) => value === "" || /^\+?\d{7,15}$/.test(value), "debe contener un teléfono válido").default(""),
   BACKUP_ADMIN_PHONE: z.string().trim().refine((value) => value === "" || /^\+?\d{7,15}$/.test(value), "debe contener un teléfono válido").default(""),
   FULL_BACKUP_OUTPUT_DIR: z.string().trim().default(""),
   CHROME_EXECUTABLE_PATH: z.string().default(""),

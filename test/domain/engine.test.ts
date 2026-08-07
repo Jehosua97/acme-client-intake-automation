@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { calculateClientProgress, calculateProgress, handleClientText, handlePassportDocument, invite, newCase, questionFor, startIntake } from "../../src/domain/engine.js";
+import { calculateClientProgress, calculateProgress, handleClientText, handlePassportDocument, invite, newCase, questionFor, resumeIntakeByAdmin, startIntake, stopIntakeByAdmin } from "../../src/domain/engine.js";
 import type { Answer, CaseRecord } from "../../src/domain/types.js";
 import { catalogFor, fieldById } from "../../src/domain/catalog.js";
 
@@ -69,8 +69,6 @@ describe("conversation engine", () => {
     handleClientText(caseRecord, "SALTAR"); // pasaporte pendiente
     assert.equal(caseRecord.currentFieldId, "identity.full_name");
     handleClientText(caseRecord, "Ana María Pérez López");
-    handleClientText(caseRecord, "No"); // nunca tramitó una visa canadiense; UCI no aplica
-    handleClientText(caseRecord, "Visa de visitante");
     assert.equal(caseRecord.currentFieldId, "identity.birth_date");
     const result = handleClientText(caseRecord, "SALTAR");
     assert.equal(caseRecord.answers["identity.birth_date"]?.status, "PENDING");
@@ -92,28 +90,70 @@ describe("conversation engine", () => {
     assert.notEqual(caseRecord.currentFieldId, "identity.full_name");
   });
 
-  it("asks for the complete name immediately after the passport and leaves other passport values for staff review", () => {
+  it("asks for the complete name and then collects the passport facts from the client", () => {
     const caseRecord = activeCase();
     const result = handlePassportDocument(caseRecord, "drive-file-1", []);
     assert.equal(caseRecord.answers["identity.full_name"], undefined);
-    assert.equal(caseRecord.answers["identity.birth_date"]?.status, "PENDING");
-    assert.equal(caseRecord.answers["identity.birth_date"]?.source, "DOCUMENT");
+    assert.equal(Object.hasOwn(caseRecord.answers, "identity.birth_date"), false);
+    assert.equal(Object.hasOwn(caseRecord.answers, "passport.issuing_country"), false);
     assert.equal(caseRecord.currentFieldId, "identity.full_name");
     assert.match(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /nombre completo/i);
-    assert.ok(result.outgoing.length > 0);
+
+    handleClientText(caseRecord, "Ana María Pérez López");
+    assert.equal(caseRecord.currentFieldId, "identity.birth_date");
+    handleClientText(caseRecord, "01/01/1990");
+    assert.equal(caseRecord.currentFieldId, "identity.birth_city");
+    handleClientText(caseRecord, "Veracruz");
+    assert.equal(caseRecord.currentFieldId, "passport.issuing_country");
+    const issuingCountry = handleClientText(caseRecord, "Sí");
+    assert.equal(caseRecord.answers["passport.issuing_country"]?.value, "México");
+    assert.equal(caseRecord.currentFieldId, "passport.issue_date");
+    assert.match(issuingCountry.outgoing[0]?.type === "text" ? issuingCountry.outgoing[0].body : "", /fecha de emisión/i);
   });
 
-  it("never reopens passport facts through CONTINUAR after collecting the name", () => {
+  it("reopens legacy passport facts that were left pending for staff", () => {
     const caseRecord = activeCase();
     handlePassportDocument(caseRecord, "drive-file-1", []);
     handleClientText(caseRecord, "Ana María Pérez López");
+    caseRecord.answers["identity.birth_date"] = {
+      fieldId: "identity.birth_date", value: null, status: "PENDING", source: "DOCUMENT", updatedAt: new Date().toISOString(),
+    };
     caseRecord.status = "WAITING_FOR_CLIENT";
     caseRecord.currentFieldId = null;
     const result = handleClientText(caseRecord, "CONTINUAR");
     assert.equal(caseRecord.answers["identity.birth_date"]?.status, "PENDING");
     assert.equal(caseRecord.answers["identity.full_name"]?.value, "Ana María Pérez López");
-    assert.notEqual(caseRecord.currentFieldId, "identity.birth_date");
-    assert.doesNotMatch(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /fecha de nacimiento/i);
+    assert.equal(caseRecord.currentFieldId, "identity.birth_date");
+    assert.match(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /fecha de nacimiento/i);
+  });
+
+  it("asks for the actual issuing country when the passport is not Mexican", () => {
+    const caseRecord = activeCase();
+    handlePassportDocument(caseRecord, "drive-file-1", []);
+    handleClientText(caseRecord, "Ana María Pérez López");
+    handleClientText(caseRecord, "01/01/1990");
+    handleClientText(caseRecord, "Veracruz");
+    const clarification = handleClientText(caseRecord, "No");
+    assert.equal(caseRecord.currentFieldId, "passport.issuing_country");
+    assert.equal(Object.hasOwn(caseRecord.answers, "passport.issuing_country"), false);
+    assert.match(clarification.outgoing[0]?.type === "text" ? clarification.outgoing[0].body : "", /nombre del país/i);
+    handleClientText(caseRecord, "Canadá");
+    assert.equal(caseRecord.answers["passport.issuing_country"]?.value, "Canadá");
+    assert.equal(caseRecord.currentFieldId, "passport.issue_date");
+  });
+
+  it("keeps an administrator-stopped case inactive until an explicit administrator resume", () => {
+    const caseRecord = activeCase();
+    const currentField = caseRecord.currentFieldId;
+    const stopped = stopIntakeByAdmin(caseRecord);
+    assert.equal(caseRecord.status, "STOPPED_BY_ADMIN");
+    assert.equal(caseRecord.currentFieldId, currentField);
+    assert.deepEqual(stopped.outgoing, []);
+    assert.equal(stopped.auditEvents[0]?.event, "CASE_STOPPED_BY_ADMIN");
+    const result = resumeIntakeByAdmin(caseRecord);
+    assert.equal(caseRecord.status, "ACTIVE");
+    assert.equal(caseRecord.currentFieldId, "workflow.passport_uploaded");
+    assert.equal(result.auditEvents[0]?.event, "CASE_RESUMED_BY_ADMIN");
   });
 
   it("removes partner questions when the client has no partner", () => {
@@ -438,8 +478,8 @@ describe("conversation engine", () => {
       lastOutgoing = result.outgoing.map((message) => message.type === "text" ? message.body : "").join("\n");
       lastAuditEvents = result.auditEvents;
     }
-    assert.equal(caseRecord.status, "NEEDS_STAFF_REVIEW");
-    assert.ok(calculateProgress(caseRecord).percent < 100);
+    assert.equal(caseRecord.status, "READY_FOR_REVIEW");
+    assert.equal(calculateProgress(caseRecord).percent, 100);
     assert.equal(calculateClientProgress(caseRecord).percent, 100);
     assert.equal(caseRecord.answers["workflow.correction_notes"]?.value, "SIN CORRECCIONES");
     assert.match(lastOutgoing, /Eso es todo\. Muchas gracias/);

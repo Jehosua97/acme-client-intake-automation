@@ -23,7 +23,7 @@ The solution turns that process into a persistent, auditable workflow while pres
 
 ## Solution overview
 
-- The bot remains silent until the operator sends the exact command `INICIAR BOT` in an individual customer chat.
+- The bot remains silent until the operator sends `INICIAR BOT` in an individual customer chat. One explicitly configured testing phone may also start its own chat.
 - Unknown contacts, status messages, broadcasts, and groups receive no automated response.
 - ACME obtains the customer's signed authorization before the operator starts the bot; the chat does not repeat that authorization step.
 - Questions are delivered one at a time and validated according to their data type.
@@ -31,7 +31,7 @@ The solution turns that process into a persistent, auditable workflow while pres
 - After the last dynamic question, the customer gets one final opportunity to report an accidental correction; the case then stops processing that conversation.
 - Customers can use `SALTAR`, `ALTO`/`PAUSA`/`PAUSAR`/`DETENTE`/`PARA`, `CONTINUAR`, `RESUMEN`, and `PENDIENTES`.
 - Passport images and PDF files are placed in a dedicated Google Drive folder for each customer.
-- The complete applicant name is collected immediately after the passport so every row is identifiable in the dashboard; the remaining passport fields are flagged for manual staff review.
+- The complete applicant name is collected immediately after the passport so every row is identifiable in the dashboard; the client then supplies the birth date, birth city, issuing country, issue date, and expiry date shown on the passport.
 - A compact local dashboard exposes case status, completion, answers, notes, custom fields, and Drive links.
 - Staff can download a client-safe PDF summary or send the same PDF to the confirmed customer email through Gmail for validation.
 
@@ -192,11 +192,19 @@ Supervisor and application logs are stored in `.data/logs/`.
 4. The state engine asks only the next applicable question.
 5. A passport photo or PDF is queued and uploaded to the customer's Drive folder.
 6. The bot asks for the applicant's complete name, which becomes the dashboard row name.
-7. Staff complete passport-derived fields manually from the dashboard.
+7. The client supplies the requested passport facts directly in WhatsApp; Mexico is offered as the default issuing country.
 8. The dashboard can download the client-safe PDF or email it to the confirmed customer address for validation.
 9. The bot asks for final corrections, confirms the destination email, and closes automated processing for that case.
 
-Sending `INICIAR BOT` again does not reset an active case.
+Sending `DETENER BOT` from the linked operator account stops automation for that individual chat without losing its state. Sending `INICIAR BOT` from the operator account resumes an administratively stopped chat without resetting it.
+
+For isolated self-service testing, configure exactly one incoming phone in `.env`:
+
+```text
+TEST_SELF_START_PHONE=+14378781645
+```
+
+Only that incoming number can start its own conversation by sending `INICIAR BOT`; the same command from every other customer number is ignored.
 
 ### Full system backup from WhatsApp
 

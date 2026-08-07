@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isAuthorizedBackupPhone, normalizeWhatsAppMessageId, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
+import { isAuthorizedBackupPhone, isAuthorizedCommandPhone, normalizeWhatsAppMessageId, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
 
 describe("WhatsApp message ID normalization", () => {
   it("accepts the serialized ID provided by normal WhatsApp messages", () => {
@@ -34,5 +34,11 @@ describe("WhatsApp full-backup authorization", () => {
     assert.equal(isAuthorizedBackupPhone("+14378781645", "+14378781645"), true);
     assert.equal(isAuthorizedBackupPhone("+14372139246", "+14378781645"), false);
     assert.equal(isAuthorizedBackupPhone("+14378781645", ""), false);
+  });
+
+  it("allows self-start only for the configured testing phone", () => {
+    assert.equal(isAuthorizedCommandPhone("+14378781645", "+14378781645"), true);
+    assert.equal(isAuthorizedCommandPhone("+14165550123", "+14378781645"), false);
+    assert.equal(isAuthorizedCommandPhone("+14378781645", ""), false);
   });
 });

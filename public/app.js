@@ -1,5 +1,5 @@
 const STATUS = {
-  DRAFT:"Borrador",INVITED:"Invitado",AWAITING_CONSENT:"Esperando consentimiento",ACTIVE:"En proceso",PAUSED:"Pausado",
+  DRAFT:"Borrador",INVITED:"Invitado",AWAITING_CONSENT:"Esperando consentimiento",ACTIVE:"En proceso",PAUSED:"Pausado",STOPPED_BY_ADMIN:"Detenido por administrador",
   WAITING_FOR_CLIENT:"Esperando cliente",NEEDS_STAFF_REVIEW:"Revisión necesaria",READY_FOR_REVIEW:"Listo para revisar",
   COMPLETE:"Completo",DECLINED:"No aceptó",DELETION_REQUESTED:"Borrado solicitado"
 };
@@ -15,7 +15,7 @@ async function api(url,options={}){
 }
 function toast(message){const node=$("#toast");node.textContent=message;node.classList.add("show");clearTimeout(toast.timer);toast.timer=setTimeout(()=>node.classList.remove("show"),2600)}
 function initials(name){return(name||"?").split(/\s+/).slice(0,2).map(x=>x[0]).join("").toUpperCase()}
-function statusClass(status){return ["ACTIVE","READY_FOR_REVIEW"].includes(status)?"active":["NEEDS_STAFF_REVIEW","WAITING_FOR_CLIENT"].includes(status)?"review":status==="PAUSED"?"paused":""}
+function statusClass(status){return ["ACTIVE","READY_FOR_REVIEW"].includes(status)?"active":["NEEDS_STAFF_REVIEW","WAITING_FOR_CLIENT"].includes(status)?"review":["PAUSED","STOPPED_BY_ADMIN"].includes(status)?"paused":""}
 function formatDate(value){if(value===null||value===undefined||value==="")return"";const match=String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);return match?`${match[3]}/${match[2]}/${match[1]}`:value==="CURRENT"?"ACTUAL":String(value).replace(/^(\d{4})-(\d{2})$/, "$2/$1")}
 function valueText(value){if(value===true)return"Sí";if(value===false)return"No";return value==null?"":formatDate(value)}
 
