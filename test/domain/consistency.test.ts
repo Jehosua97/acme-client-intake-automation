@@ -47,6 +47,16 @@ describe("cross-field consistency", () => {
     assert.equal(immediateConsistencyIssue("visit.until", "2027-06-16", answers), null);
   });
 
+  it("validates the chronology of a previous trip to Canada", () => {
+    const answers = {
+      "application.previous_canada_entry_date": answer("application.previous_canada_entry_date", "2024-06-15"),
+    };
+    const referenceDate = new Date("2026-08-07T12:00:00Z");
+    assert.match(immediateConsistencyIssue("application.previous_canada_exit_date", "2024-06-15", answers, referenceDate) ?? "", /posterior/);
+    assert.equal(immediateConsistencyIssue("application.previous_canada_exit_date", "2024-06-16", answers, referenceDate), null);
+    assert.match(immediateConsistencyIssue("application.previous_canada_exit_date", "2027-01-01", answers, referenceDate) ?? "", /futuro/);
+  });
+
   it("detects impossible passport and visit chronology", () => {
     const answers = {
       "identity.birth_date": answer("identity.birth_date", "2030-01-01"),

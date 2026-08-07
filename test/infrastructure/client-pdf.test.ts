@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { catalogFor } from "../../src/domain/catalog.js";
 import { calculateProgress, newCase, startIntake } from "../../src/domain/engine.js";
 import type { Answer } from "../../src/domain/types.js";
-import { clientPdfFilename, employmentRowsForPdf, generateClientPdf } from "../../src/infrastructure/client-pdf.js";
+import { clientPdfFilename, employmentRowsForPdf, generateClientPdf, reportSectionsForPdf } from "../../src/infrastructure/client-pdf.js";
 
 function answer(fieldId: string, value: Answer["value"]): Answer {
   return { fieldId, value, status: "CONFIRMED", source: "CHAT", confidence: 100, updatedAt: new Date().toISOString() };
@@ -86,5 +86,47 @@ describe("client PDF", () => {
     });
     const pageCount = pdf.toString("latin1").match(/\/Type\s*\/Page\b/g)?.length ?? 0;
     assert.equal(pageCount, 1);
+  });
+
+  it("organizes family information into person-specific blocks", () => {
+    const caseRecord = newCase("client-family", "+525500000001");
+    startIntake(caseRecord);
+    Object.assign(caseRecord.answers, {
+      "family.marital_status": answer("family.marital_status", "Unión libre"),
+      "family.has_partner": answer("family.has_partner", true),
+      "partner.full_name": answer("partner.full_name", "Pareja Actual"),
+      "family.had_previous_partner": answer("family.had_previous_partner", true),
+      "previous_partner.full_name": answer("previous_partner.full_name", "Pareja Anterior"),
+      "mother.full_name": answer("mother.full_name", "Nombre Madre"),
+      "father.full_name": answer("father.full_name", "Nombre Padre"),
+      "children.count": answer("children.count", 2),
+      "children.1.full_name": answer("children.1.full_name", "Primer Hijo"),
+      "children.2.full_name": answer("children.2.full_name", "Segundo Hijo"),
+    });
+    const fields = catalogFor(caseRecord.answers);
+    const sections = reportSectionsForPdf({
+      organizationName: "MultiServicios",
+      displayName: "Cliente Familia",
+      phone: caseRecord.phoneE164,
+      email: null,
+      statusLabel: "En proceso",
+      progress: calculateProgress(caseRecord),
+      answers: caseRecord.answers,
+      fields,
+      documents: [],
+      customFields: [],
+    });
+    const familyTitles = sections.filter((section) => section.title.startsWith("Familia ·")).map((section) => section.title);
+    assert.deepEqual(familyTitles, [
+      "Familia · Resumen familiar",
+      "Familia · Pareja actual",
+      "Familia · Pareja anterior",
+      "Familia · Madre",
+      "Familia · Padre",
+      "Familia · Hijo/a 1",
+      "Familia · Hijo/a 2",
+    ]);
+    const partner = sections.find((section) => section.title === "Familia · Pareja actual");
+    assert.equal(partner?.items.some((item) => /madre|padre|hijo/i.test(item.label)), false);
   });
 });

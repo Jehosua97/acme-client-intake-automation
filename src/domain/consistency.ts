@@ -46,6 +46,16 @@ export function immediateConsistencyIssue(
     const from = textValue(answers, "visit.from");
     if (from && from >= value) return "La fecha estimada de salida debe ser posterior a la fecha de llegada a Canadá.";
   }
+  if (fieldId === "application.previous_canada_entry_date") {
+    const exit = textValue(answers, "application.previous_canada_exit_date");
+    if (value > referenceDate.toISOString().slice(0, 10)) return "La fecha de entrada anterior a Canadá no puede estar en el futuro.";
+    if (exit && value >= exit) return "La fecha de entrada anterior debe ser anterior a la fecha de salida de Canadá.";
+  }
+  if (fieldId === "application.previous_canada_exit_date") {
+    const entry = textValue(answers, "application.previous_canada_entry_date");
+    if (value > referenceDate.toISOString().slice(0, 10)) return "La fecha de salida anterior de Canadá no puede estar en el futuro.";
+    if (entry && entry >= value) return "La fecha de salida anterior debe ser posterior a la fecha de entrada a Canadá.";
+  }
   const employment = fieldId.match(/^employment\.(\d+)\.from$/);
   if (employment) {
     const index = Number(employment[1]);
@@ -119,5 +129,10 @@ export function crossFieldIssues(answers: Answers, referenceDate = new Date()): 
   const visitFrom = textValue(answers, "visit.from");
   const visitUntil = textValue(answers, "visit.until");
   if (visitFrom && visitUntil && visitFrom >= visitUntil) issues.push("La salida planeada de Canadá debe ser posterior a la llegada.");
+  const previousCanadaEntry = textValue(answers, "application.previous_canada_entry_date");
+  const previousCanadaExit = textValue(answers, "application.previous_canada_exit_date");
+  if (previousCanadaEntry && previousCanadaExit && previousCanadaEntry >= previousCanadaExit) {
+    issues.push("La salida del viaje anterior a Canadá debe ser posterior a la entrada.");
+  }
   return [...issues, ...employmentCoverageIssues(answers, referenceDate)];
 }

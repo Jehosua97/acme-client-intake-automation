@@ -1,4 +1,4 @@
-import { catalogFor, fieldById } from "./catalog.js";
+import { catalogFor, CURRENT_WORKFLOW_SCHEMA_VERSION, fieldById, WORKFLOW_SCHEMA_FIELD } from "./catalog.js";
 import type { Answer, CaseRecord, EngineResult, FieldDefinition, OutgoingMessage, Progress } from "./types.js";
 import { validateAnswer } from "./validation.js";
 import { crossFieldIssues, derivedEmploymentUntil, immediateConsistencyIssue } from "./consistency.js";
@@ -76,7 +76,16 @@ export function newCase(id: string, phoneE164: string): CaseRecord {
     id,
     phoneE164,
     status: "DRAFT",
-    answers: {},
+    answers: {
+      [WORKFLOW_SCHEMA_FIELD]: {
+        fieldId: WORKFLOW_SCHEMA_FIELD,
+        value: CURRENT_WORKFLOW_SCHEMA_VERSION,
+        status: "CONFIRMED",
+        source: "SYSTEM",
+        confidence: 100,
+        updatedAt: timestamp,
+      },
+    },
     currentFieldId: null,
     consentVersion: null,
     invitedAt: null,
@@ -429,7 +438,8 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
     return { caseRecord, outgoing: advance(caseRecord), auditEvents };
   }
 
-  if (SKIP.has(command) && !unknownParentValue(current.id, input)) {
+  const biometricsUnknown = current.id === "application.has_canada_biometrics" && ["no sé", "no se", "nose"].includes(command);
+  if (SKIP.has(command) && !biometricsUnknown && !unknownParentValue(current.id, input)) {
     setAnswer(caseRecord, current.id, null, "PENDING", "CHAT");
     auditEvents.push({ event: "ANSWER_SKIPPED", detail: { fieldId: current.id } });
     return { caseRecord, outgoing: advance(caseRecord), auditEvents };
@@ -453,6 +463,12 @@ export function handleClientText(caseRecord: CaseRecord, raw: string): EngineRes
     else if (["no", "n"].includes(command)) {
       return { caseRecord, outgoing: [text("De acuerdo. Escribe el nombre del país que emitió tu pasaporte.")], auditEvents };
     }
+  }
+  if (current.id === "application.has_canada_biometrics") {
+    if (["sí", "si", "s", "yes"].includes(command)) resolvedValue = "SÍ";
+    else if (["no", "n"].includes(command)) resolvedValue = "NO";
+    else if (biometricsUnknown) resolvedValue = "NO SÉ";
+    else return { caseRecord, outgoing: [text("Por favor responde Sí, No o No sé.")], auditEvents };
   }
   const validation = validateAnswer(current, resolvedValue);
   if (!validation.ok) return { caseRecord, outgoing: [text(validation.message)], auditEvents };

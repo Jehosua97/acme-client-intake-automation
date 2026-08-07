@@ -3,8 +3,14 @@ import { addressPrompt } from "./address.js";
 import { isKnownParent } from "./family.js";
 
 type Answers = Readonly<Record<string, Answer>>;
+export const WORKFLOW_SCHEMA_FIELD = "workflow.schema_version";
+export const CURRENT_WORKFLOW_SCHEMA_VERSION = "2026-08-canada-travel-v2";
 const always = () => true;
 const isYes = (fieldId: string) => (answers: Answers) => answers[fieldId]?.value === true;
+const usesCurrentWorkflow = (answers: Answers) => answers[WORKFLOW_SCHEMA_FIELD]?.value === CURRENT_WORKFLOW_SCHEMA_VERSION;
+const isCurrentWorkflowAndYes = (fieldId: string) => (answers: Answers) => usesCurrentWorkflow(answers) && isYes(fieldId)(answers);
+const needsUci = (answers: Answers) => isYes("application.has_previous_canada_visa")(answers)
+  && (!usesCurrentWorkflow(answers) || answers["application.has_traveled_to_canada"]?.value === false);
 const isNotReportedDeceased = (fieldId: string) => (answers: Answers) => answers[fieldId]?.value !== "FALLECIDO/A";
 const isKnownAndNotDeceased = (fullNameFieldId: string, maritalStatusFieldId: string) => (answers: Answers) => (
   isKnownParent(fullNameFieldId)(answers) && isNotReportedDeceased(maritalStatusFieldId)(answers)
@@ -56,7 +62,11 @@ const core: FieldDefinition[] = [
   field("passport.expiry_date", "Pasaporte", "Fecha de vencimiento", "📕 ¿Cuál es la *fecha de vencimiento* de tu pasaporte?\n\nUsa el formato *DD/MM/AAAA*.", "date"),
 
   field("application.has_previous_canada_visa", "Inicio", "Trámite canadiense anterior", "🍁 ¿Ya has tramitado alguna vez una visa canadiense? Responde Sí o No.", "yes_no"),
-  field("application.uci", "Inicio", "UCI", "¿Cuál es tu número UCI de Canadá? Si no lo conoces en este momento, escribe SALTAR y quedará pendiente.", "text", { applies: isYes("application.has_previous_canada_visa") }),
+  field("application.has_traveled_to_canada", "Inicio", "Viaje anterior a Canadá", "🇨🇦 ¿Has viajado anteriormente a Canadá? Responde Sí o No.", "yes_no", { applies: usesCurrentWorkflow }),
+  field("application.previous_canada_entry_date", "Inicio", "Entrada anterior a Canadá", "En tu viaje más reciente a Canadá, ¿qué fecha entraste al país?\n\nUsa el formato *DD/MM/AAAA*.", "date", { applies: isCurrentWorkflowAndYes("application.has_traveled_to_canada") }),
+  field("application.previous_canada_exit_date", "Inicio", "Salida anterior de Canadá", "¿Qué fecha saliste de Canadá en ese viaje?\n\nUsa el formato *DD/MM/AAAA*.", "date", { applies: isCurrentWorkflowAndYes("application.has_traveled_to_canada") }),
+  field("application.has_canada_biometrics", "Inicio", "Biométricos de Canadá", "🖐️ ¿Tienes datos biométricos registrados para Canadá?\n\nResponde *Sí*, *No* o *No sé*.", "text", { applies: isCurrentWorkflowAndYes("application.has_traveled_to_canada") }),
+  field("application.uci", "Inicio", "UCI", "¿Cuál es tu número UCI de Canadá? Si no lo conoces en este momento, escribe SALTAR y quedará pendiente.", "text", { applies: needsUci }),
   field("application.visa_type", "Inicio", "Tipo de visa", "¿El trámite es para una visa de visitante (turista) o una visa de tránsito?"),
 
   field("residence.current_country", "Residencia", "País de residencia", "¿En qué país vives actualmente?"),

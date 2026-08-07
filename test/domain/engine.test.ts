@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { calculateClientProgress, calculateProgress, handleClientText, handlePassportDocument, invite, newCase, questionFor, resumeIntakeByAdmin, startIntake, stopIntakeByAdmin } from "../../src/domain/engine.js";
 import type { Answer, CaseRecord } from "../../src/domain/types.js";
-import { catalogFor, fieldById } from "../../src/domain/catalog.js";
+import { catalogFor, fieldById, WORKFLOW_SCHEMA_FIELD } from "../../src/domain/catalog.js";
 
 function activeCase(): CaseRecord {
   const caseRecord = newCase("case-1", "+5215550000000");
@@ -164,18 +164,42 @@ describe("conversation engine", () => {
     assert.equal(ids.has("partner.birth_date"), false);
   });
 
-  it("asks for UCI only after a previous Canadian visa application", () => {
+  it("replaces UCI with prior-trip dates and biometrics when a new client has traveled to Canada", () => {
     const caseRecord = activeCase();
-    caseRecord.answers["application.has_previous_canada_visa"] = confirmed("application.has_previous_canada_visa", false);
+    caseRecord.answers["application.has_previous_canada_visa"] = confirmed("application.has_previous_canada_visa", true);
+    caseRecord.answers["application.has_traveled_to_canada"] = confirmed("application.has_traveled_to_canada", true);
     let fields = catalogFor(caseRecord.answers);
     assert.equal(fields.some((field) => field.id === "application.uci"), false);
+    assert.equal(fields.some((field) => field.id === "application.previous_canada_entry_date"), true);
+    assert.equal(fields.some((field) => field.id === "application.previous_canada_exit_date"), true);
+    assert.match(fields.find((field) => field.id === "application.has_canada_biometrics")?.prompt ?? "", /No sé/i);
 
-    caseRecord.answers["application.has_previous_canada_visa"] = confirmed("application.has_previous_canada_visa", true);
+    caseRecord.answers["application.has_traveled_to_canada"] = confirmed("application.has_traveled_to_canada", false);
     fields = catalogFor(caseRecord.answers);
-    const uci = fields.find((field) => field.id === "application.uci");
-    assert.ok(uci);
-    assert.equal(uci.required, true);
-    assert.match(uci.prompt, /número UCI/i);
+    assert.equal(fields.some((field) => field.id === "application.uci"), true);
+    assert.equal(fields.some((field) => field.id === "application.previous_canada_entry_date"), false);
+  });
+
+  it("keeps the previous UCI rules for expedients created before the workflow change", () => {
+    const caseRecord = activeCase();
+    delete caseRecord.answers[WORKFLOW_SCHEMA_FIELD];
+    caseRecord.answers["application.has_previous_canada_visa"] = confirmed("application.has_previous_canada_visa", true);
+    const fields = catalogFor(caseRecord.answers);
+    assert.equal(fields.some((field) => field.id === "application.has_traveled_to_canada"), false);
+    assert.equal(fields.some((field) => field.id === "application.uci"), true);
+  });
+
+  it("records an unknown biometrics status as a confirmed answer", () => {
+    const caseRecord = activeCase();
+    caseRecord.answers["application.has_previous_canada_visa"] = confirmed("application.has_previous_canada_visa", true);
+    caseRecord.answers["application.has_traveled_to_canada"] = confirmed("application.has_traveled_to_canada", true);
+    caseRecord.answers["application.previous_canada_entry_date"] = confirmed("application.previous_canada_entry_date", "2024-01-01");
+    caseRecord.answers["application.previous_canada_exit_date"] = confirmed("application.previous_canada_exit_date", "2024-01-15");
+    caseRecord.currentFieldId = "application.has_canada_biometrics";
+    const result = handleClientText(caseRecord, "No sé");
+    assert.equal(caseRecord.answers["application.has_canada_biometrics"]?.value, "NO SÉ");
+    assert.equal(caseRecord.answers["application.has_canada_biometrics"]?.status, "CONFIRMED");
+    assert.equal(result.auditEvents.some((event) => event.event === "ANSWER_SKIPPED"), false);
   });
 
   it("collects resident contact details only when the client has one in Canada", () => {
@@ -457,6 +481,8 @@ describe("conversation engine", () => {
         value = current.id === "identity.birth_date" ? "01/01/1990"
           : current.id === "passport.issue_date" ? "01/01/2024"
           : current.id === "passport.expiry_date" ? "01/01/2034"
+          : current.id === "application.previous_canada_entry_date" ? "01/01/2024"
+          : current.id === "application.previous_canada_exit_date" ? "15/01/2024"
           : current.id === "visit.from" ? "01/06/2027"
           : current.id === "visit.until" ? "15/06/2027"
           : "01/01/2020";
@@ -467,6 +493,7 @@ describe("conversation engine", () => {
       } else if (current.kind === "email") value = "cliente@example.com";
       else if (current.kind === "phone") value = "+52 55 1234 5678";
       else if (current.kind === "money") value = "5000";
+      if (current.id === "application.has_canada_biometrics") value = "No sé";
       if (current.id === "workflow.correction_notes") value = "TODO CORRECTO";
       if (current.id === "workflow.passport_uploaded") {
         const result = handlePassportDocument(caseRecord, "drive-file-1", []);

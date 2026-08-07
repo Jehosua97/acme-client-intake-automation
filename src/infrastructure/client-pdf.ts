@@ -21,14 +21,14 @@ export interface ClientPdfData {
   generatedAt?: Date;
 }
 
-interface ReportItem {
+export interface ReportItem {
   label: string;
   value: string;
   status?: string;
   link?: string;
 }
 
-interface ReportSection {
+export interface ReportSection {
   title: string;
   items: ReportItem[];
 }
@@ -123,7 +123,18 @@ export function employmentRowsForPdf(data: Pick<ClientPdfData, "answers" | "fiel
   }).sort((left, right) => left.sortKey.localeCompare(right.sortKey));
 }
 
-function reportSections(data: ClientPdfData): ReportSection[] {
+function sectionTitleForField(field: FieldDefinition): string {
+  if (field.section !== "Familia") return field.section;
+  if (field.id.startsWith("partner.")) return "Familia · Pareja actual";
+  if (field.id.startsWith("previous_partner.")) return "Familia · Pareja anterior";
+  if (field.id.startsWith("mother.")) return "Familia · Madre";
+  if (field.id.startsWith("father.")) return "Familia · Padre";
+  const child = field.id.match(/^children\.(\d+)\./);
+  if (child) return `Familia · Hijo/a ${child[1]}`;
+  return "Familia · Resumen familiar";
+}
+
+export function reportSectionsForPdf(data: ClientPdfData): ReportSection[] {
   const grouped = new Map<string, ReportItem[]>();
   const visibleIds = new Set<string>();
   for (const field of data.fields) {
@@ -131,9 +142,10 @@ function reportSections(data: ClientPdfData): ReportSection[] {
     visibleIds.add(field.id);
     if (field.section === "Empleo") continue;
     const answer = data.answers[field.id];
-    const items = grouped.get(field.section) ?? [];
+    const sectionTitle = sectionTitleForField(field);
+    const items = grouped.get(sectionTitle) ?? [];
     items.push(answerItem(field.label, answer));
-    grouped.set(field.section, items);
+    grouped.set(sectionTitle, items);
   }
 
   const systemItems: ReportItem[] = [];
@@ -203,8 +215,20 @@ export async function generateClientPdf(data: ClientPdfData): Promise<Buffer> {
   const columns = 3;
   const gap = 10;
   const columnWidth = (contentWidth - gap * (columns - 1)) / columns;
+  const gridRowHeight = (row: ReportItem[]) => Math.max(...row.map((item) => {
+    doc.font("Helvetica-Bold").fontSize(6.5);
+    const labelHeight = doc.heightOfString(item.label, { width: columnWidth - 12 });
+    doc.font("Helvetica").fontSize(8);
+    const valueHeight = doc.heightOfString(item.value, { width: columnWidth - 12 });
+    return Math.max(29, labelHeight + valueHeight + 12);
+  }));
   const drawGridSection = (section: ReportSection) => {
-    ensureSpace(32);
+    const rows: ReportItem[][] = [];
+    for (let index = 0; index < section.items.length; index += columns) rows.push(section.items.slice(index, index + columns));
+    const estimatedHeight = 28 + rows.reduce((total, row) => total + gridRowHeight(row), 0);
+    const usablePageHeight = pageBottom() - doc.page.margins.top;
+    if (section.title.startsWith("Familia ·") && estimatedHeight <= usablePageHeight && doc.y + estimatedHeight > pageBottom()) addPage();
+    else ensureSpace(32);
     const headerY = doc.y;
     doc.roundedRect(doc.page.margins.left, headerY, contentWidth, 18, 4).fill("#eaf3ee");
     doc.fillColor("#1f6b4f").font("Helvetica-Bold").fontSize(9).text(section.title, doc.page.margins.left + 8, headerY + 5, { width: contentWidth - 16, lineBreak: false });
@@ -212,13 +236,7 @@ export async function generateClientPdf(data: ClientPdfData): Promise<Buffer> {
 
     for (let index = 0; index < section.items.length; index += columns) {
       const row = section.items.slice(index, index + columns);
-      const rowHeight = Math.max(...row.map((item) => {
-        doc.font("Helvetica-Bold").fontSize(6.5);
-        const labelHeight = doc.heightOfString(item.label, { width: columnWidth - 12 });
-        doc.font("Helvetica").fontSize(8);
-        const valueHeight = doc.heightOfString(item.value, { width: columnWidth - 12 });
-        return Math.max(29, labelHeight + valueHeight + 12);
-      }));
+      const rowHeight = gridRowHeight(row);
       if (doc.y + rowHeight > pageBottom()) {
         addPage();
         doc.fillColor("#1f6b4f").font("Helvetica-Bold").fontSize(8).text(`${section.title} (continuación)`);
@@ -303,7 +321,7 @@ export async function generateClientPdf(data: ClientPdfData): Promise<Buffer> {
   };
 
   let employmentRendered = false;
-  for (const section of reportSections(data)) {
+  for (const section of reportSectionsForPdf(data)) {
     if (employmentRows.length && !employmentRendered && section.title === "Viaje") {
       drawEmploymentSection();
       employmentRendered = true;
