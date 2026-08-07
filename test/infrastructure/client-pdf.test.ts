@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { catalogFor } from "../../src/domain/catalog.js";
 import { calculateProgress, newCase, startIntake } from "../../src/domain/engine.js";
 import type { Answer } from "../../src/domain/types.js";
-import { clientPdfFilename, employmentRowsForPdf, generateClientPdf, reportSectionsForPdf } from "../../src/infrastructure/client-pdf.js";
+import { clientPdfFilename, employmentRowsForPdf, generateClientPdf, reportSectionsForPdf, reportSectionTitleForField } from "../../src/infrastructure/client-pdf.js";
 
 function answer(fieldId: string, value: Answer["value"]): Answer {
   return { fieldId, value, status: "CONFIRMED", source: "CHAT", confidence: 100, updatedAt: new Date().toISOString() };
@@ -128,5 +128,7 @@ describe("client PDF", () => {
     ]);
     const partner = sections.find((section) => section.title === "Familia · Pareja actual");
     assert.equal(partner?.items.some((item) => /madre|padre|hijo/i.test(item.label)), false);
+    assert.equal(reportSectionTitleForField(fields.find((field) => field.id === "mother.full_name")!), "Familia · Madre");
+    assert.equal(reportSectionTitleForField(fields.find((field) => field.id === "identity.full_name")!), "Datos personales");
   });
 });

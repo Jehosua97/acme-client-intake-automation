@@ -8,7 +8,7 @@ import { z } from "zod";
 import { loadConfig } from "./config.js";
 import { catalogFor } from "./domain/catalog.js";
 import { CASE_STATUSES, type CaseStatus, type Progress } from "./domain/types.js";
-import { clientPdfFilename, generateClientPdf, type ClientPdfData } from "./infrastructure/client-pdf.js";
+import { clientPdfFilename, generateClientPdf, reportSectionTitleForField, type ClientPdfData } from "./infrastructure/client-pdf.js";
 import { SQLiteStore, type StoredDocument } from "./infrastructure/sqlite-store.js";
 import { GoogleDriveService } from "./infrastructure/google-drive.js";
 import { WhatsAppLocalService } from "./infrastructure/whatsapp-local.js";
@@ -107,7 +107,11 @@ app.get("/api/clients/:id", async (request, reply) => {
   const details = store.getClientDetails(id);
   if (!details) return reply.code(404).send({ error: "Cliente no encontrado" });
   const caseRecord = store.getCaseById(id)!;
-  const fields = catalogFor(caseRecord.answers).map(({ applies: _applies, ...field }) => field);
+  const fields = catalogFor(caseRecord.answers).map((definition) => {
+    const displaySection = reportSectionTitleForField(definition);
+    const { applies: _applies, ...field } = definition;
+    return { ...field, displaySection };
+  });
   return { ...details, fields };
 });
 

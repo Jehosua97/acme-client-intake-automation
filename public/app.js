@@ -76,29 +76,55 @@ async function openClient(id){
   const select=$("#detailStatus");select.replaceChildren(...Object.entries(STATUS).map(([value,label])=>{const option=el("option",null,label);option.value=value;option.selected=value===c.status;return option}));
   $("#detailNotes").value=c.notes||"";renderInformation();renderDocuments();renderCustom();showTab("information");if(!$("#clientDialog").open)$("#clientDialog").showModal();
 }
+function displaySection(field){return field.displaySection||field.section}
+function renderFieldRow(field,compact=false){
+  const answer=state.current.answers[field.id],current=valueText(answer?.value),row=el("div",`field-row ${answer?.status?.toLowerCase()||"missing"}${compact?" employment-cell":""}`),label=el("label",null,field.label+(field.required?" *":"")),control=el("div","field-control");let input;
+  if(field.kind==="yes_no"){
+    input=el("select");
+    for(const [value,text] of [["","Sin dato"],["Sí","Sí"],["No","No"]]){const option=el("option",null,text);option.value=value;option.selected=current===value;input.append(option)}
+  }else{
+    const multiline=field.kind==="text"&&current.length>55;
+    input=el(multiline?"textarea":"input");input.value=current;input.placeholder=answer?.status==="PENDING"?"Pendiente":"Sin dato";input.title=current;
+    if(multiline)input.rows=Math.min(3,Math.max(2,Math.ceil(current.length/65)));else if(field.kind==="email")input.type="email";
+  }
+  input.onchange=async()=>{if(!input.value)return;try{await api(`/api/clients/${state.current.id}/answers/${encodeURIComponent(field.id)}`,{method:"PUT",body:JSON.stringify({value:input.value})});toast("Dato guardado");await openClient(state.current.id)}catch(error){toast(error.message)}};
+  const status=el("span","field-status",answer?{CONFIRMED:"Confirmado",PENDING:"Pendiente",PROPOSED:"Propuesto",CONFLICT:"Conflicto"}[answer.status]:"Faltante");status.title=status.textContent;control.append(input,status);row.append(label,control);return row;
+}
+function renderSectionCard(section,fields){
+  const card=el("article","field-section"),heading=el("div","section-heading"),title=el("div");
+  title.append(el("h3",null,section),el("p",null,`${fields.filter(field=>state.current.answers[field.id]?.status==="CONFIRMED").length} de ${fields.length} capturados`));heading.append(title);card.append(heading);
+  const grid=el("div","fields-grid");for(const field of fields)grid.append(renderFieldRow(field));card.append(grid);return card;
+}
+function renderEmploymentSection(fields){
+  const card=el("article","field-section employment-section"),heading=el("div","section-heading"),title=el("div");
+  title.append(el("h3",null,"Actividades de los últimos 10 años · orden cronológico"),el("p",null,`${fields.filter(field=>state.current.answers[field.id]?.status==="CONFIRMED").length} de ${fields.length} datos capturados`));heading.append(title);card.append(heading);
+  const indexes=[...new Set(fields.map(field=>field.id.match(/^employment\.(\d+)\./)?.[1]).filter(Boolean))];
+  indexes.sort((left,right)=>{const leftValue=String(state.current.answers[`employment.${left}.from`]?.value||"9999-99"),rightValue=String(state.current.answers[`employment.${right}.from`]?.value||"9999-99");return leftValue.localeCompare(rightValue)});
+  const table=el("div","employment-editor"),labels=["Inicio","Fin","Actividad u ocupación","Empresa, institución o situación","Ciudad","Estado"];
+  const tableHeader=el("div","employment-table-header");for(const label of labels)tableHeader.append(el("span",null,label));table.append(tableHeader);
+  for(const index of indexes){
+    const period=el("div","employment-period");
+    for(const suffix of ["from","until","activity","organization","city","province"]){const field=fields.find(item=>item.id===`employment.${index}.${suffix}`);period.append(field?renderFieldRow(field,true):el("div","employment-empty","—"))}
+    table.append(period);
+  }
+  card.append(table);return card;
+}
 function renderInformation(){
-  const root=$("#informationSections");root.replaceChildren();const groups=new Map();const query=$("#fieldSearch").value.trim().toLowerCase();let visible=0;
+  const root=$("#informationSections");root.replaceChildren();const groups=new Map(),query=$("#fieldSearch").value.trim().toLowerCase();let visible=0;
   for(const field of state.current.fields){
     if(field.forms?.includes("INTERNAL"))continue;
-    const answer=state.current.answers[field.id],searchText=`${field.section} ${field.label} ${valueText(answer?.value)}`.toLowerCase();
+    const answer=state.current.answers[field.id],section=displaySection(field),searchText=`${section} ${field.section} ${field.label} ${valueText(answer?.value)}`.toLowerCase();
     if(query&&!searchText.includes(query))continue;if(state.pendingOnly&&answer?.status==="CONFIRMED")continue;
-    if(!groups.has(field.section))groups.set(field.section,[]);groups.get(field.section).push(field);visible++;
+    if(!groups.has(section))groups.set(section,[]);groups.get(section).push(field);visible++;
   }
   $("#visibleFieldCount").textContent=`${visible} dato${visible===1?"":"s"} visibles`;
-  for(const [section,sectionFields] of groups){
-    const chunks=[];for(let index=0;index<sectionFields.length;index+=8)chunks.push(sectionFields.slice(index,index+8));
-    for(const [chunkIndex,fields] of chunks.entries()){
-    const card=el("article","field-section"),heading=el("div","section-heading"),title=el("div"),suffix=chunks.length>1?` ${chunkIndex+1}/${chunks.length}`:"";title.append(el("h3",null,section+suffix),el("p",null,`${fields.filter(f=>state.current.answers[f.id]?.status==="CONFIRMED").length} de ${fields.length} capturados`));heading.append(title);card.append(heading);
-    const grid=el("div","fields-grid");
-    for(const field of fields){
-      const answer=state.current.answers[field.id],row=el("div",`field-row ${answer?.status?.toLowerCase()||"missing"}`),label=el("label",null,field.label+(field.required?" *":"")),control=el("div","field-control");let input;
-      if(field.kind==="yes_no"){input=el("select");for(const [v,t] of [["","Sin dato"],["Sí","Sí"],["No","No"]]){const o=el("option",null,t);o.value=v;o.selected=valueText(answer?.value)===v;input.append(o)}}
-      else{input=el("input");input.value=valueText(answer?.value);input.placeholder=answer?.status==="PENDING"?"Pendiente":"Sin dato";if(field.kind==="email")input.type="email"}
-      input.onchange=async()=>{if(!input.value)return;try{await api(`/api/clients/${state.current.id}/answers/${encodeURIComponent(field.id)}`,{method:"PUT",body:JSON.stringify({value:input.value})});toast("Dato guardado");await openClient(state.current.id)}catch(error){toast(error.message)}};
-      const status=el("span","field-status",answer?{CONFIRMED:"Confirmado",PENDING:"Pendiente",PROPOSED:"Propuesto",CONFLICT:"Conflicto"}[answer.status]:"Faltante");status.title=status.textContent;control.append(input,status);row.append(label,control);grid.append(row);
+  let columns=null;
+  for(const [section,fields] of groups){
+    if(section==="Empleo"){
+      columns=null;root.append(renderEmploymentSection(fields));continue;
     }
-    card.append(grid);root.append(card);
-    }
+    if(!columns){columns=el("div","information-columns");root.append(columns)}
+    columns.append(renderSectionCard(section,fields));
   }
   if(!visible)root.append(el("div","no-fields","No hay datos que coincidan con este filtro."));
 }

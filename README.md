@@ -33,8 +33,8 @@ The solution turns that process into a persistent, auditable workflow while pres
 - Passport images and PDF files are placed in a dedicated Google Drive folder for each customer.
 - The complete applicant name is collected immediately after the passport so every row is identifiable in the dashboard; the client then supplies the birth date, birth city, issuing country, issue date, and expiry date shown on the passport.
 - New expedients ask whether the applicant has previously traveled to Canada. A previous traveler supplies the most recent entry/exit dates and whether Canadian biometrics are registered (`Sí`, `No`, or `No sé`) instead of being asked for a UCI.
-- A compact local dashboard exposes case status, completion, answers, notes, custom fields, and Drive links.
-- Family information in the PDF is separated into summary, current partner, previous partner, mother, father, and one block per child.
+- A compact local dashboard exposes case status, completion, answers, notes, custom fields, and Drive links in a two-column report view; long activity histories use an editable chronological table.
+- Family information in both the dashboard and PDF is separated into summary, current partner, previous partner, mother, father, and one block per child.
 - Staff can download a client-safe PDF summary or send the same PDF to the confirmed customer email through Gmail for validation.
 
 This phase intentionally excludes health, criminal, political, government, organizational, and military questions. It does not use OCR or generative AI.

@@ -123,7 +123,7 @@ export function employmentRowsForPdf(data: Pick<ClientPdfData, "answers" | "fiel
   }).sort((left, right) => left.sortKey.localeCompare(right.sortKey));
 }
 
-function sectionTitleForField(field: FieldDefinition): string {
+export function reportSectionTitleForField(field: FieldDefinition): string {
   if (field.section !== "Familia") return field.section;
   if (field.id.startsWith("partner.")) return "Familia · Pareja actual";
   if (field.id.startsWith("previous_partner.")) return "Familia · Pareja anterior";
@@ -142,7 +142,7 @@ export function reportSectionsForPdf(data: ClientPdfData): ReportSection[] {
     visibleIds.add(field.id);
     if (field.section === "Empleo") continue;
     const answer = data.answers[field.id];
-    const sectionTitle = sectionTitleForField(field);
+    const sectionTitle = reportSectionTitleForField(field);
     const items = grouped.get(sectionTitle) ?? [];
     items.push(answerItem(field.label, answer));
     grouped.set(sectionTitle, items);
