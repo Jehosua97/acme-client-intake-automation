@@ -27,7 +27,7 @@ export class FullBackupService {
   constructor(
     private readonly projectRoot: string,
     private readonly outputDirectory: string,
-    private readonly store: SQLiteStore,
+    private readonly store: SQLiteStore | readonly SQLiteStore[],
   ) {}
 
   isRunning(): boolean { return this.active !== null; }
@@ -50,7 +50,11 @@ export class FullBackupService {
     const suffix = timestamp();
     const databaseBackupDirectory = path.join(source, ".data", "backups");
     await mkdir(databaseBackupDirectory, { recursive: true });
-    await sqliteBackup(this.store.db, path.join(databaseBackupDirectory, `bot-before-full-backup-${suffix}.sqlite`));
+    const stores = Array.isArray(this.store) ? this.store : [this.store];
+    for (const [index, store] of stores.entries()) {
+      const prefix = index === 0 ? "bot" : "usa-bot";
+      await sqliteBackup(store.db, path.join(databaseBackupDirectory, `${prefix}-before-full-backup-${suffix}.sqlite`));
+    }
 
     const filename = `MultiServiciosBot_Backup_${suffix}.zip`;
     const finalPath = path.join(destination, filename);

@@ -4,15 +4,122 @@ import WhatsAppWeb from "whatsapp-web.js";
 import type { Message } from "whatsapp-web.js";
 import type { Config } from "../config.js";
 import { handleClientText, handlePassportDocument, hasPendingClientPassportQuestions, resumeIntakeByAdmin, startIntake, stopIntakeByAdmin } from "../domain/engine.js";
+import { handleUsaDocument, handleUsaText, resumeUsaIntake, startUsaIntake, stopUsaIntake } from "../domain/usa-engine.js";
 import type { CaseRecord, OutgoingMessage } from "../domain/types.js";
 import type { GoogleDriveService } from "./google-drive.js";
 import type { FullBackupService } from "./full-backup.js";
 import type { PendingDocument, SQLiteStore } from "./sqlite-store.js";
 
 const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
-const BOT_START_COMMAND = "INICIAR BOT";
-const BOT_STOP_COMMAND = "DETENER BOT";
+const BOT_START_CANADA_COMMAND = "INICIAR BOT CANADA";
+const BOT_STOP_CANADA_COMMAND = "DETENER BOT CANADA";
+const BOT_START_USA_COMMAND = "INICIAR BOT USA";
+const BOT_STOP_USA_COMMAND = "DETENER BOT USA";
 const FULL_BACKUP_COMMAND = "HACER RESPALDO BACKUP";
+const VISA_CANADA_INFO_COMMAND = "INFO VISA CANADA";
+const VISA_USA_INFO_COMMAND = "INFO VISA USA";
+const VISA_CANADA_INFO_MESSAGE = `🇨🇦 *REQUISITOS PARA VISA DE CANADÁ*
+
+📄 *Documentos y fotografías*
+📌 Foto del pasaporte
+📌 Foto personal
+
+👤 *Datos personales*
+📌 Correo electrónico
+📌 Dirección completa en México:
+   • Número de casa
+   • Código postal
+   • Ciudad y estado
+📌 Fecha estimada de viaje
+📌 ¿Ha viajado a algún otro país?
+📌 ¿Ha estado anteriormente en Canadá?
+
+🎓 *Educación*
+📌 Nombre de la escuela (solo el último nivel de estudios)
+📌 Año y mes de inicio
+📌 Año y mes de término
+📌 Ciudad y estado donde se encuentra la escuela
+
+💼 *Trabajo actual o anterior*
+📌 Nombre de la empresa donde trabaja o trabajó en México
+📌 Año y mes de inicio
+📌 Año y mes de término (si aplica)
+📌 Ciudad donde se encuentra la empresa
+📌 Puesto que ocupa
+
+🏪 *Negocio (si aplica)*
+📌 ¿Tiene algún negocio?
+📌 ¿Cuenta con algún registro?
+📌 Nombre del negocio
+📌 Fecha en que lo inició
+
+👪 *Datos de los padres*
+📌 Madre: nombre completo, ocupación, dirección y fecha de nacimiento
+📌 Padre: nombre completo, ocupación, dirección y fecha de nacimiento
+
+💍 *Estado civil del aplicante*
+📌 Estado civil (soltero o casado)
+📌 Nombre completo del esposo(a), si aplica
+📌 Fecha del matrimonio legal (día, mes y año), si aplica
+📌 Fecha de nacimiento
+📌 Dirección
+📌 Ocupación de la pareja
+📌 Nombre completo de la pareja
+📌 Fecha de nacimiento de la pareja (día, mes y año)
+
+👧👦 *Datos de los hijos (si aplica)*
+📌 Nombre completo
+📌 Ocupación
+📌 Fecha de nacimiento (día, mes y año)
+📌 Dirección`;
+const VISA_USA_INFO_MESSAGE = `🇺🇸 *REQUISITOS PARA VISA DE ESTADOS UNIDOS 2026*
+
+📄 *Documentos y datos personales*
+📌 Foto del pasaporte
+📌 Dirección completa del aplicante, con código postal y ciudad
+📌 Número de teléfono del aplicante
+📌 Número de teléfono adicional
+📌 Correo electrónico
+📌 Nombre utilizado en redes sociales
+📌 Perfiles de Facebook, Twitter e Instagram
+
+💼 *Trabajo actual o anterior*
+📌 Nombre completo de la empresa
+📌 Fecha de ingreso (día, mes y año)
+📌 Dirección completa de la empresa, con código postal
+📌 Descripción, con sus propias palabras, de las actividades que realiza en la empresa
+
+🎓 *Educación*
+📌 Nombre completo de la escuela
+📌 Fecha de ingreso (día, mes y año)
+📌 Fecha de término (día, mes y año)
+📌 Nombre de la carrera
+
+📧 *Información adicional de contacto*
+📌 ¿Tiene algún correo adicional que haya utilizado durante los últimos 5 años?
+
+✈️ *Información del viaje*
+📌 ¿A qué parte de Estados Unidos piensa viajar?
+📌 Dirección completa del destino, con código postal
+📌 Teléfono del destino
+
+🗽 *Familiares en Estados Unidos*
+📌 ¿Tiene algún familiar ciudadano en Estados Unidos?
+📌 Nombre completo
+📌 Dirección
+📌 Teléfono
+📌 Correo electrónico
+📌 Vínculo familiar
+
+👪 *Datos de los padres*
+📌 Madre: nombre completo, dirección, fecha de nacimiento y ocupación en México
+📌 Padre: nombre completo, dirección, fecha de nacimiento y ocupación en México
+
+🌎 *Antecedentes adicionales*
+📌 ¿Habla algún otro idioma? Indique cuál.
+📌 ¿Ha viajado al extranjero? Mencione todos los países que ha visitado.
+📌 ¿Ha sido deportado de algún país? Indique cuál.
+📌 ¿Ha solicitado anteriormente una visa americana? Indique cuándo (mes, día y año).`;
 const { Client, LocalAuth } = WhatsAppWeb;
 
 const phoneDigits = (value: string) => value.replace(/\D/g, "");
@@ -55,6 +162,7 @@ interface ChatIdentity {
   aliases: string[];
   phone: string;
 }
+type WorkflowKind = "CANADA" | "USA";
 
 export interface WhatsAppRuntimeStatus {
   state: "STARTING" | "QR" | "AUTHENTICATED" | "READY" | "BACKUP" | "DISCONNECTED" | "ERROR";
@@ -75,6 +183,8 @@ export class WhatsAppLocalService {
     private readonly store: SQLiteStore,
     private readonly drive: GoogleDriveService,
     private readonly fullBackup: FullBackupService,
+    private readonly usaStore: SQLiteStore,
+    private readonly usaDrive: GoogleDriveService,
   ) {
     const executablePath = config.CHROME_EXECUTABLE_PATH || this.findBrowser();
     this.client = new Client({
@@ -136,9 +246,9 @@ export class WhatsAppLocalService {
     const messageId = normalizeWhatsAppMessageId(message.id);
     try {
       const command = message.body.trim().toLocaleUpperCase("es");
-      if (![BOT_START_COMMAND, BOT_STOP_COMMAND].includes(command) || message.isStatus) return;
+      if (![BOT_START_CANADA_COMMAND, BOT_STOP_CANADA_COMMAND, BOT_START_USA_COMMAND, BOT_STOP_USA_COMMAND, VISA_CANADA_INFO_COMMAND, VISA_USA_INFO_COMMAND].includes(command) || message.isStatus) return;
       commandReceived = command;
-      if (messageId && this.store.isProcessed(messageId)) return;
+      if (messageId && (this.store.isProcessed(messageId) || this.usaStore.isProcessed(messageId))) return;
       const rawMessageId = message.id as unknown;
       const remoteFromId = rawMessageId && typeof rawMessageId === "object"
         ? serializedText((rawMessageId as Record<string, unknown>).remote)
@@ -149,13 +259,26 @@ export class WhatsAppLocalService {
         if (messageId) this.store.markProcessed(messageId);
         return;
       }
-      const identity = await this.resolveChatIdentity(chatId, [remoteFromId, serializedText(message.to)]);
-      if (command === BOT_STOP_COMMAND) {
-        await this.stopCaseByAdmin(chatId, identity);
-      } else {
-        await this.startOrResumeCase(chatId, identity, "OWNER");
+      if (command === VISA_CANADA_INFO_COMMAND) {
+        if (messageId) this.store.markProcessed(messageId);
+        await this.client.sendMessage(chatId, VISA_CANADA_INFO_MESSAGE);
+        this.store.audit(null, "VISA_CANADA_INFO_SENT", { chatId, messageId });
+        return;
       }
-      if (messageId) this.store.markProcessed(messageId);
+      if (command === VISA_USA_INFO_COMMAND) {
+        if (messageId) this.store.markProcessed(messageId);
+        await this.client.sendMessage(chatId, VISA_USA_INFO_MESSAGE);
+        this.store.audit(null, "VISA_USA_INFO_SENT", { chatId, messageId });
+        return;
+      }
+      const identity = await this.resolveChatIdentity(chatId, [remoteFromId, serializedText(message.to)]);
+      const workflow: WorkflowKind = command.endsWith("USA") ? "USA" : "CANADA";
+      if (command === BOT_STOP_CANADA_COMMAND || command === BOT_STOP_USA_COMMAND) {
+        await this.stopCaseByAdmin(chatId, identity, workflow);
+      } else {
+        await this.startOrResumeCase(chatId, identity, "OWNER", workflow);
+      }
+      if (messageId) this.storeFor(workflow).markProcessed(messageId);
       this.runtime = { ...this.runtime, lastError: null };
     } catch (error) {
       if (commandReceived) this.store.audit(null, "BOT_ADMIN_COMMAND_FAILED", {
@@ -168,70 +291,82 @@ export class WhatsAppLocalService {
     }
   }
 
-  private caseForIdentity(chatId: string, identity: ChatIdentity): CaseRecord | null {
-    let caseRecord = this.store.getCaseByChatId(chatId);
+  private storeFor(workflow: WorkflowKind): SQLiteStore { return workflow === "USA" ? this.usaStore : this.store; }
+  private driveFor(workflow: WorkflowKind): GoogleDriveService { return workflow === "USA" ? this.usaDrive : this.drive; }
+
+  private caseForIdentity(chatId: string, identity: ChatIdentity, workflow: WorkflowKind): CaseRecord | null {
+    const store = this.storeFor(workflow);
+    let caseRecord = store.getCaseByChatId(chatId);
     if (!caseRecord) {
       for (const alias of identity.aliases) {
-        caseRecord = this.store.getCaseByChatId(alias);
+        caseRecord = store.getCaseByChatId(alias);
         if (caseRecord) break;
       }
     }
-    if (caseRecord) for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
+    if (caseRecord) for (const alias of identity.aliases) store.addChatAlias(caseRecord.id, alias);
     return caseRecord;
   }
 
-  private async stopCaseByAdmin(chatId: string, identity: ChatIdentity): Promise<void> {
-    const caseRecord = this.caseForIdentity(chatId, identity);
+  private async stopCaseByAdmin(chatId: string, identity: ChatIdentity, workflow: WorkflowKind): Promise<void> {
+    const store = this.storeFor(workflow);
+    const caseRecord = this.caseForIdentity(chatId, identity, workflow);
     if (!caseRecord) {
-      this.store.audit(null, "BOT_STOP_WITHOUT_CASE_IGNORED", { chatId });
+      store.audit(null, "BOT_STOP_WITHOUT_CASE_IGNORED", { chatId, workflow });
       return;
     }
     if (["NEEDS_STAFF_REVIEW", "READY_FOR_REVIEW", "COMPLETE", "DECLINED", "DELETION_REQUESTED"].includes(caseRecord.status)) {
-      this.store.audit(caseRecord.id, "BOT_STOP_IGNORED_FOR_CLOSED_CASE", { status: caseRecord.status });
+      store.audit(caseRecord.id, "BOT_STOP_IGNORED_FOR_CLOSED_CASE", { status: caseRecord.status });
       return;
     }
-    const result = stopIntakeByAdmin(caseRecord);
-    this.store.saveCase(result.caseRecord);
-    for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, { ...event.detail, chatId });
+    const result = workflow === "USA" ? stopUsaIntake(caseRecord) : stopIntakeByAdmin(caseRecord);
+    store.saveCase(result.caseRecord);
+    for (const event of result.auditEvents) store.audit(caseRecord.id, event.event, { ...event.detail, chatId });
   }
 
-  private async startOrResumeCase(chatId: string, identity: ChatIdentity, initiatedBy: "OWNER" | "TEST_PHONE"): Promise<void> {
-    const existing = this.caseForIdentity(chatId, identity);
+  private async startOrResumeCase(chatId: string, identity: ChatIdentity, initiatedBy: "OWNER" | "TEST_PHONE", workflow: WorkflowKind): Promise<void> {
+    const store = this.storeFor(workflow);
+    const otherWorkflow: WorkflowKind = workflow === "USA" ? "CANADA" : "USA";
+    const otherCase = this.caseForIdentity(chatId, identity, otherWorkflow);
+    if (otherCase && ["ACTIVE", "PAUSED", "WAITING_FOR_CLIENT"].includes(otherCase.status)) {
+      await this.client.sendMessage(chatId, `Primero detén el bot de ${otherWorkflow === "USA" ? "USA" : "Canadá"} para evitar que las respuestas se asignen al expediente equivocado.`);
+      return;
+    }
+    const existing = this.caseForIdentity(chatId, identity, workflow);
     if (existing) {
       let result: ReturnType<typeof startIntake> | null = null;
       if (["DRAFT", "INVITED", "AWAITING_CONSENT"].includes(existing.status)) {
-        result = startIntake(existing);
+        result = workflow === "USA" ? startUsaIntake(existing) : startIntake(existing);
       } else if (existing.status === "PAUSED") {
-        result = handleClientText(existing, "CONTINUAR");
+        result = workflow === "USA" ? handleUsaText(existing, "CONTINUAR") : handleClientText(existing, "CONTINUAR");
       } else if ((existing.status === "STOPPED_BY_ADMIN" && initiatedBy === "OWNER")
-        || (existing.status === "NEEDS_STAFF_REVIEW" && hasPendingClientPassportQuestions(existing))) {
-        result = resumeIntakeByAdmin(existing);
+        || (workflow === "CANADA" && existing.status === "NEEDS_STAFF_REVIEW" && hasPendingClientPassportQuestions(existing))) {
+        result = workflow === "USA" ? resumeUsaIntake(existing) : resumeIntakeByAdmin(existing);
       }
       if (result) {
-        this.store.saveCase(result.caseRecord);
-        this.store.audit(existing.id, "BOT_STARTED_OR_RESUMED_FROM_CHAT", { chatId, initiatedBy });
-        for (const event of result.auditEvents) this.store.audit(existing.id, event.event, event.detail);
+        store.saveCase(result.caseRecord);
+        store.audit(existing.id, "BOT_STARTED_OR_RESUMED_FROM_CHAT", { chatId, initiatedBy, workflow });
+        for (const event of result.auditEvents) store.audit(existing.id, event.event, event.detail);
         await this.sendAll(chatId, result.outgoing);
         return;
       }
       if (existing.status === "STOPPED_BY_ADMIN") {
-        this.store.audit(existing.id, "TEST_PHONE_START_IGNORED_AFTER_ADMIN_STOP", { initiatedBy });
+        store.audit(existing.id, "TEST_PHONE_START_IGNORED_AFTER_ADMIN_STOP", { initiatedBy });
         return;
       }
-      this.store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status, initiatedBy });
+      store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status, initiatedBy });
       await this.client.sendMessage(chatId, "Tu expediente ya está iniciado y conserva todo el avance. El cliente puede responder la pregunta pendiente o pedir un resumen.");
       return;
     }
 
     const displayName = identity.phone || "Cliente de WhatsApp";
-    const caseRecord = this.store.createCase(chatId, identity.phone, displayName);
-    for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
+    const caseRecord = store.createCase(chatId, identity.phone, displayName);
+    for (const alias of identity.aliases) store.addChatAlias(caseRecord.id, alias);
     caseRecord.status = "INVITED";
     caseRecord.invitedAt = new Date().toISOString();
-    const result = startIntake(caseRecord);
-    this.store.saveCase(result.caseRecord);
-    this.store.audit(caseRecord.id, "BOT_STARTED_FROM_CHAT", { chatId, initiatedBy });
-    for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, event.detail);
+    const result = workflow === "USA" ? startUsaIntake(caseRecord) : startIntake(caseRecord);
+    store.saveCase(result.caseRecord);
+    store.audit(caseRecord.id, "BOT_STARTED_FROM_CHAT", { chatId, initiatedBy, workflow });
+    for (const event of result.auditEvents) store.audit(caseRecord.id, event.event, event.detail);
     await this.sendAll(chatId, result.outgoing);
   }
 
@@ -247,7 +382,7 @@ export class WhatsAppLocalService {
         });
         return;
       }
-      if (this.store.isProcessed(messageId)) return;
+      if (this.store.isProcessed(messageId) || this.usaStore.isProcessed(messageId)) return;
       const rawMessageId = message.id as unknown;
       const remoteFromId = rawMessageId && typeof rawMessageId === "object"
         ? serializedText((rawMessageId as Record<string, unknown>).remote)
@@ -261,16 +396,19 @@ export class WhatsAppLocalService {
         this.store.markProcessed(messageId);
         return;
       }
-      if (message.body.trim().toLocaleUpperCase("es") === BOT_START_COMMAND) {
+      const incomingCommand = message.body.trim().toLocaleUpperCase("es");
+      if ([BOT_START_CANADA_COMMAND, BOT_START_USA_COMMAND].includes(incomingCommand)) {
+        const workflow: WorkflowKind = incomingCommand === BOT_START_USA_COMMAND ? "USA" : "CANADA";
+        const commandStore = this.storeFor(workflow);
         const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
         const authorized = isAuthorizedCommandPhone(identity.phone, this.config.TEST_SELF_START_PHONE);
-        this.store.markProcessed(messageId);
+        commandStore.markProcessed(messageId);
         if (!authorized) {
-          this.store.audit(null, "CLIENT_START_COMMAND_REJECTED", { sourceChatId, resolvedPhone: identity.phone || null });
+          commandStore.audit(null, "CLIENT_START_COMMAND_REJECTED", { sourceChatId, resolvedPhone: identity.phone || null, workflow });
           return;
         }
-        this.store.audit(null, "TEST_PHONE_START_COMMAND_RECEIVED", { sourceChatId, resolvedPhone: identity.phone });
-        await this.startOrResumeCase(sourceChatId, identity, "TEST_PHONE");
+        commandStore.audit(null, "TEST_PHONE_START_COMMAND_RECEIVED", { sourceChatId, resolvedPhone: identity.phone, workflow });
+        await this.startOrResumeCase(sourceChatId, identity, "TEST_PHONE", workflow);
         return;
       }
       if (message.body.trim().toLocaleUpperCase("es") === FULL_BACKUP_COMMAND) {
@@ -284,15 +422,13 @@ export class WhatsAppLocalService {
         await this.startFullBackup(sourceChatId, messageId);
         return;
       }
-      let caseRecord = this.store.getCaseByChatId(sourceChatId);
-      if (!caseRecord) {
-        const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
-        for (const alias of identity.aliases) {
-          caseRecord = this.store.getCaseByChatId(alias);
-          if (caseRecord) break;
-        }
-        if (caseRecord) for (const alias of identity.aliases) this.store.addChatAlias(caseRecord.id, alias);
-      }
+      const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
+      const canadaCase = this.caseForIdentity(sourceChatId, identity, "CANADA");
+      const usaCase = this.caseForIdentity(sourceChatId, identity, "USA");
+      const open = (record: CaseRecord | null) => record && !["STOPPED_BY_ADMIN", "NEEDS_STAFF_REVIEW", "READY_FOR_REVIEW", "COMPLETE", "DECLINED", "DELETION_REQUESTED"].includes(record.status);
+      const workflow: WorkflowKind | null = open(usaCase) ? "USA" : open(canadaCase) ? "CANADA" : null;
+      const caseRecord = workflow === "USA" ? usaCase : workflow === "CANADA" ? canadaCase : null;
+      const activeStore = workflow ? this.storeFor(workflow) : null;
       if (!caseRecord) { this.store.markProcessed(messageId); return; }
       if (caseRecord.status === "STOPPED_BY_ADMIN") {
         this.store.markProcessed(messageId);
@@ -306,34 +442,34 @@ export class WhatsAppLocalService {
 
       if (message.hasMedia && ["image", "document"].includes(message.type)) {
         if (caseRecord.status !== "ACTIVE") {
-          const result = handleClientText(caseRecord, message.body || "");
-          this.store.saveCase(result.caseRecord);
-          this.store.markProcessed(messageId);
+          const result = workflow === "USA" ? handleUsaText(caseRecord, message.body || "") : handleClientText(caseRecord, message.body || "");
+          activeStore!.saveCase(result.caseRecord);
+          activeStore!.markProcessed(messageId);
           await this.sendAll(sourceChatId, result.outgoing);
           return;
         }
-        this.store.queueDocument(caseRecord.id, messageId);
-        this.store.markProcessed(messageId);
+        activeStore!.queueDocument(caseRecord.id, messageId);
+        activeStore!.markProcessed(messageId);
         await this.client.sendMessage(sourceChatId, "Recibí tu archivo. Lo estoy guardando en tu carpeta; te aviso en cuanto termine.");
         void this.processPendingDocument();
         return;
       }
 
       if (message.hasMedia) {
-        this.store.markProcessed(messageId);
+        activeStore!.markProcessed(messageId);
         await this.client.sendMessage(sourceChatId, "Por ahora solo puedo guardar fotos y archivos PDF. Envíame el pasaporte en uno de esos formatos.");
         return;
       }
 
       const previousFullName = caseRecord.answers["identity.full_name"]?.value;
-      const result = handleClientText(caseRecord, message.body);
-      this.store.saveCase(result.caseRecord);
-      for (const event of result.auditEvents) this.store.audit(caseRecord.id, event.event, event.detail);
-      this.store.markProcessed(messageId);
+      const result = workflow === "USA" ? handleUsaText(caseRecord, message.body) : handleClientText(caseRecord, message.body);
+      activeStore!.saveCase(result.caseRecord);
+      for (const event of result.auditEvents) activeStore!.audit(caseRecord.id, event.event, event.detail);
+      activeStore!.markProcessed(messageId);
       const currentFullName = result.caseRecord.answers["identity.full_name"]?.value;
       if (typeof currentFullName === "string" && currentFullName !== previousFullName) {
-        void this.drive.syncClientFolderName(caseRecord.id).catch((error) => {
-          this.store.audit(caseRecord.id, "DRIVE_FOLDER_NAME_SYNC_FAILED", { error: error instanceof Error ? error.message : String(error) });
+        void this.driveFor(workflow!).syncClientFolderName(caseRecord.id).catch((error) => {
+          activeStore!.audit(caseRecord.id, "DRIVE_FOLDER_NAME_SYNC_FAILED", { error: error instanceof Error ? error.message : String(error) });
         });
       }
       await this.sendAll(sourceChatId, result.outgoing);
@@ -344,8 +480,15 @@ export class WhatsAppLocalService {
     if (this.workerBusy || this.runtime.state !== "READY") return;
     this.workerBusy = true;
     let job: PendingDocument | null = null;
+    let workflow: WorkflowKind = "CANADA";
+    let activeStore = this.store;
     try {
       job = this.store.claimDocument();
+      if (!job) {
+        workflow = "USA";
+        activeStore = this.usaStore;
+        job = this.usaStore.claimDocument();
+      }
       if (!job) return;
       let message: Message | null;
       try {
@@ -363,26 +506,27 @@ export class WhatsAppLocalService {
       }
       if (!media) throw new Error("No fue posible descargar el archivo de WhatsApp");
       if (!ALLOWED_MIME.has(media.mimetype)) {
-        this.store.rejectDocument(job.id, `Formato no permitido: ${media.mimetype}`);
+        activeStore.rejectDocument(job.id, `Formato no permitido: ${media.mimetype}`);
         await this.client.sendMessage(message.from, "No pude guardar ese formato. Envíame una foto JPG/PNG/WEBP o un PDF.");
         return;
       }
       const bytes = Buffer.from(media.data, "base64");
       if (bytes.length > this.config.MAX_DOCUMENT_MB * 1024 * 1024) {
-        this.store.rejectDocument(job.id, "Archivo demasiado grande");
+        activeStore.rejectDocument(job.id, "Archivo demasiado grande");
         await this.client.sendMessage(message.from, `El archivo supera ${this.config.MAX_DOCUMENT_MB} MB. Envíame una versión más pequeña.`);
         return;
       }
-      const uploaded = await this.drive.uploadClientDocument(job.clientId, bytes, media.mimetype, media.filename ?? null);
-      this.store.completeDocument(job, uploaded);
-      const caseRecord = this.store.getCaseById(job.clientId);
+      const uploaded = await this.driveFor(workflow).uploadClientDocument(job.clientId, bytes, media.mimetype, media.filename ?? null);
+      activeStore.completeDocument(job, uploaded);
+      const caseRecord = activeStore.getCaseById(job.clientId);
       if (!caseRecord) return;
-      const result = handlePassportDocument(caseRecord, uploaded.driveFileId, []);
-      this.store.saveCase(result.caseRecord);
-      await this.client.sendMessage(message.from, "✅ Tu pasaporte quedó guardado correctamente en tu carpeta.");
+      const result = workflow === "USA" ? handleUsaDocument(caseRecord, uploaded.driveFileId) : handlePassportDocument(caseRecord, uploaded.driveFileId, []);
+      activeStore.saveCase(result.caseRecord);
+      for (const event of result.auditEvents) activeStore.audit(caseRecord.id, event.event, event.detail);
+      await this.client.sendMessage(message.from, "✅ Tu archivo quedó guardado correctamente en la carpeta de este expediente.");
       await this.sendAll(message.from, result.outgoing);
     } catch (error) {
-      if (job) this.store.failDocument(job.id, error instanceof Error ? error.message : "Error desconocido");
+      if (job) activeStore.failDocument(job.id, error instanceof Error ? error.message : "Error desconocido");
       this.setError(error, false);
     } finally {
       this.workerBusy = false;
@@ -461,16 +605,16 @@ export class WhatsAppLocalService {
       // getChats()/message.getChat() currently throws for some WhatsApp LID
       // records. Searching only the activation phrase avoids serializing every
       // chat and lets a recent command survive an application restart.
-      const messages = await this.client.searchMessages(BOT_START_COMMAND, { limit: 25 });
-      for (const message of messages) {
-        if (!message.fromMe || message.isStatus || message.timestamp < cutoff) continue;
-        if (message.body.trim().toLocaleUpperCase("es") !== BOT_START_COMMAND) continue;
-        const messageId = normalizeWhatsAppMessageId(message.id);
-        if (messageId && this.store.isProcessed(messageId)) continue;
-        this.store.audit(null, "RECENT_START_COMMAND_RECOVERED", {
-          messageId,
-        });
-        await this.handleOwnerMessage(message);
+      for (const command of [BOT_START_CANADA_COMMAND, BOT_START_USA_COMMAND]) {
+        const messages = await this.client.searchMessages(command, { limit: 25 });
+        for (const message of messages) {
+          if (!message.fromMe || message.isStatus || message.timestamp < cutoff) continue;
+          if (message.body.trim().toLocaleUpperCase("es") !== command) continue;
+          const messageId = normalizeWhatsAppMessageId(message.id);
+          if (messageId && (this.store.isProcessed(messageId) || this.usaStore.isProcessed(messageId))) continue;
+          this.store.audit(null, "RECENT_START_COMMAND_RECOVERED", { messageId, command });
+          await this.handleOwnerMessage(message);
+        }
       }
     } catch (error) {
       // Recovery is best-effort. Live message_create events remain active and

@@ -2,8 +2,16 @@ import { randomUUID } from "node:crypto";
 import { Readable } from "node:stream";
 import { google } from "googleapis";
 import type { Config } from "../config.js";
-import type { SQLiteStore } from "./sqlite-store.js";
 import { EncryptedTokenStore } from "./encrypted-token-store.js";
+
+interface DriveStore {
+  getSetting(key: string): string | null;
+  setSetting(key: string, value: string): void;
+  getDriveFolder(clientId: string): { id: string; link: string } | null;
+  setDriveFolder(clientId: string, folderId: string, link: string): void;
+  getClientDetails(clientId: string): Record<string, unknown> | null;
+  audit(clientId: string | null, event: string, detail?: Record<string, unknown>): void;
+}
 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.file";
 const GMAIL_SEND_SCOPE = "https://www.googleapis.com/auth/gmail.send";
@@ -31,7 +39,7 @@ export class GoogleDriveService {
   private rootFolderLink: string | null = null;
   private authorizedScopes = new Set<string>();
 
-  constructor(private readonly config: Config, private readonly store: SQLiteStore) {
+  constructor(private readonly config: Config, private readonly store: DriveStore) {
     this.oauth = new google.auth.OAuth2(config.GOOGLE_CLIENT_ID, config.GOOGLE_CLIENT_SECRET, config.GOOGLE_REDIRECT_URI);
     this.tokenStore = new EncryptedTokenStore(config.googleTokenPath, config.APP_ENCRYPTION_KEY);
     this.oauth.on("tokens", (tokens) => {
@@ -152,13 +160,30 @@ export class GoogleDriveService {
     this.store.audit(clientId, "DRIVE_FOLDER_NAME_SYNCED", { name });
   }
 
+  async deleteClientFolder(clientId: string): Promise<void> {
+    const folder = this.store.getDriveFolder(clientId);
+    if (!folder) return;
+    if (!this.connected) throw new Error("GOOGLE_NOT_CONNECTED");
+    const drive = google.drive({ version: "v3", auth: this.oauth });
+    try {
+      await drive.files.delete({ fileId: folder.id });
+      this.store.audit(clientId, "DRIVE_CLIENT_FOLDER_DELETED", { folderId: folder.id });
+    } catch (error) {
+      const status = (error as { code?: number; response?: { status?: number } }).code ?? (error as { response?: { status?: number } }).response?.status;
+      if (status !== 404) throw error;
+    }
+  }
+
   private async ensureRootFolder(): Promise<{ id: string; link: string }> {
     const drive = google.drive({ version: "v3", auth: this.oauth });
     const storedId = this.store.getSetting("google_root_folder_id");
     if (storedId) {
       try {
-        const existing = await drive.files.get({ fileId: storedId, fields: "id,webViewLink,trashed" });
+        const existing = await drive.files.get({ fileId: storedId, fields: "id,name,webViewLink,trashed" });
         if (!(existing.data as { trashed?: boolean }).trashed) {
+          if (existing.data.name !== this.config.GOOGLE_DRIVE_ROOT_FOLDER_NAME) {
+            await drive.files.update({ fileId: storedId, requestBody: { name: this.config.GOOGLE_DRIVE_ROOT_FOLDER_NAME }, fields: "id,name" });
+          }
           const link = existing.data.webViewLink ?? `https://drive.google.com/drive/folders/${storedId}`;
           this.rootFolderLink = link;
           return { id: storedId, link };

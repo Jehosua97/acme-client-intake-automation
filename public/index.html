@@ -22,8 +22,17 @@
   <main>
     <section class="hero">
       <div><p class="eyebrow">Panel local</p><h1>Expedientes de clientes</h1><p>Seguimiento de información y documentos en un solo lugar.</p></div>
-      <div class="start-hint"><span>Para iniciar en WhatsApp</span><strong>Escribe INICIAR BOT en el chat del cliente</strong></div>
+      <div class="start-hint"><span>Para iniciar en WhatsApp</span><strong>Usa INICIAR BOT CANADA o INICIAR BOT USA</strong></div>
     </section>
+
+    <nav class="workspace-tabs" aria-label="Tipos de servicio">
+      <button class="active" type="button" data-workspace="canada">🇨🇦 Visa Canadá</button>
+      <button type="button" data-workspace="usa">🇺🇸 Visa USA</button>
+      <button type="button" data-workspace="eta">🇨🇦 eTA Canadá</button>
+      <button type="button" data-workspace="companies">🏢 Empresas en Canadá</button>
+    </nav>
+
+    <section id="canadaWorkspace" class="workspace-view">
 
     <section class="metrics" aria-label="Resumen">
       <article><span>Total de clientes</span><strong id="metricTotal">0</strong></article>
@@ -34,18 +43,57 @@
 
     <section class="panel">
       <div class="panel-toolbar">
-        <div><h2>Clientes</h2><p id="resultCount">0 registros</p></div>
+        <div><h2>Clientes · Visa Canadá</h2><p id="resultCount">0 registros</p></div>
         <div class="filters">
+          <button class="help-button" type="button" data-help="canada">? Ayuda</button>
           <label class="search"><span>⌕</span><input id="searchInput" type="search" placeholder="Buscar cliente o teléfono"></label>
           <select id="statusFilter" aria-label="Filtrar por estado"><option value="">Todos los estados</option></select>
         </div>
       </div>
       <div class="table-wrap">
         <table>
-          <thead><tr><th>Cliente</th><th>Estado</th><th>Progreso</th><th>Documentos</th><th>Actualizado</th><th></th></tr></thead>
+          <thead><tr>
+            <th><button class="sort-button" type="button" data-sort="displayName">Cliente</button></th>
+            <th><button class="sort-button" type="button" data-sort="phone">Teléfono</button></th>
+            <th><button class="sort-button" type="button" data-sort="status">Estado</button></th>
+            <th><button class="sort-button" type="button" data-sort="progress">Progreso</button></th>
+            <th><button class="sort-button" type="button" data-sort="pending">Pendientes</button></th>
+            <th><button class="sort-button" type="button" data-sort="documents">Documentos</button></th>
+            <th><button class="sort-button" type="button" data-sort="createdAt">Creado</button></th>
+            <th><button class="sort-button" type="button" data-sort="updatedAt">Actualizado <span class="sort-indicator">▼</span></button></th>
+            <th><span class="visually-hidden">Acciones</span></th>
+          </tr></thead>
           <tbody id="clientRows"></tbody>
         </table>
-        <div id="emptyState" class="empty" hidden><div>◎</div><h3>Aún no hay expedientes</h3><p>Abre un chat individual y escribe <strong>INICIAR BOT</strong>.</p></div>
+        <div id="emptyState" class="empty" hidden><div>◎</div><h3>Aún no hay expedientes</h3><p>Abre un chat individual y escribe <strong>INICIAR BOT CANADA</strong>.</p></div>
+      </div>
+    </section>
+    </section>
+
+    <section id="usaWorkspace" class="workspace-view" hidden>
+      <section class="metrics" aria-label="Resumen USA">
+        <article><span>Total de clientes</span><strong id="usaMetricTotal">0</strong></article>
+        <article><span>En proceso</span><strong id="usaMetricActive">0</strong></article>
+        <article><span>Por revisar</span><strong id="usaMetricReview">0</strong></article>
+        <article><span>Documentos</span><strong id="usaMetricDocuments">0</strong></article>
+      </section>
+      <section class="panel">
+        <div class="panel-toolbar"><div><h2>Clientes · Visa USA</h2><p id="usaResultCount">0 registros</p></div><div class="filters"><button class="help-button" type="button" data-help="usa">? Ayuda</button><label class="search"><span>⌕</span><input id="usaSearchInput" type="search" placeholder="Buscar cliente o teléfono"></label></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Cliente</th><th>Teléfono</th><th>Estado</th><th>Progreso</th><th>Pendientes</th><th>Documentos</th><th>Creado</th><th>Actualizado</th><th></th></tr></thead><tbody id="usaClientRows"></tbody></table><div id="usaEmptyState" class="empty" hidden><div>🇺🇸</div><h3>Aún no hay expedientes USA</h3><p>Abre un chat individual y escribe <strong>INICIAR BOT USA</strong>.</p></div></div>
+      </section>
+    </section>
+
+    <section id="etaWorkspace" class="workspace-view" hidden>
+      <div class="workspace-placeholder panel">
+        <div class="workspace-placeholder-heading"><div><span class="workspace-icon">🇨🇦</span><h2>eTA Canadá</h2><p>Espacio preparado para gestionar autorizaciones electrónicas de viaje.</p></div><button class="help-button" type="button" data-help="eta">? Ayuda</button></div>
+        <div class="module-status"><span>Próximamente</span><p>En los siguientes pasos definiremos el formulario, los documentos y el seguimiento de solicitudes eTA.</p></div>
+      </div>
+    </section>
+
+    <section id="companiesWorkspace" class="workspace-view" hidden>
+      <div class="workspace-placeholder panel">
+        <div class="workspace-placeholder-heading"><div><span class="workspace-icon">🏢</span><h2>Registro de empresas en Canadá</h2><p>Espacio preparado para administrar procesos de incorporación empresarial.</p></div><button class="help-button" type="button" data-help="companies">? Ayuda</button></div>
+        <div class="module-status"><span>Próximamente</span><p>En los siguientes pasos construiremos aquí los expedientes, requisitos y documentos corporativos.</p></div>
       </div>
     </section>
   </main>
@@ -88,6 +136,14 @@
   <dialog id="setupDialog" class="setup-dialog">
     <button id="closeSetup" class="dialog-x">×</button>
     <div id="qrArea"><p class="eyebrow">Conectar WhatsApp</p><h2>Escanea el código QR</h2><p>WhatsApp → Dispositivos vinculados → Vincular dispositivo</p><img id="qrImage" alt="Código QR de WhatsApp"><div class="qr-placeholder">Esperando código QR…</div></div>
+  </dialog>
+
+  <dialog id="workspaceHelpDialog" class="workspace-help-dialog">
+    <button id="closeWorkspaceHelp" class="dialog-x" type="button" aria-label="Cerrar">×</button>
+    <p id="workspaceHelpEyebrow" class="eyebrow"></p>
+    <h2 id="workspaceHelpTitle"></h2>
+    <p id="workspaceHelpIntro" class="help-intro"></p>
+    <div id="workspaceHelpFeatures" class="help-features"></div>
   </dialog>
 
   <div id="toast" class="toast" role="status"></div>

@@ -3,12 +3,43 @@ const STATUS = {
   WAITING_FOR_CLIENT:"Esperando cliente",NEEDS_STAFF_REVIEW:"Revisión necesaria",READY_FOR_REVIEW:"Listo para revisar",
   COMPLETE:"Completo",DECLINED:"No aceptó",DELETION_REQUESTED:"Borrado solicitado"
 };
-const state={clients:[],current:null,system:null,pendingOnly:false};
+const state={clients:[],usaClients:[],current:null,currentWorkflow:"canada",system:null,pendingOnly:false,clientSort:{key:"updatedAt",direction:"desc"}};
+const WORKSPACE_HELP={
+  canada:{eyebrow:"Visa Canadá",title:"Ayuda del sistema de visas canadienses",intro:"Este módulo está activo y concentra el flujo actual de expedientes.",features:[
+    ["Iniciar el bot","Desde la cuenta vinculada, envía INICIAR BOT CANADA en el chat individual del cliente."],
+    ["Detener o reanudar","Envía DETENER BOT CANADA para detener el expediente. INICIAR BOT CANADA permite retomarlo sin perder el avance."],
+    ["Enviar los requisitos","Escribe Info Visa Canada para enviar automáticamente la lista de requisitos al cliente."],
+    ["Consultar el expediente","Abre un cliente en la tabla para revisar respuestas, progreso, documentos, notas y datos adicionales."],
+    ["Archivos en Google Drive","Cada cliente tiene una carpeta propia. Puedes abrirla desde la pestaña Documentos dentro de su expediente."],
+    ["PDF y correo","Desde el expediente puedes descargar el resumen PDF o enviarlo al correo confirmado del cliente."]
+  ]},
+  usa:{eyebrow:"Visa USA",title:"Ayuda del sistema de visas estadounidenses",intro:"Este módulo funciona de manera independiente al sistema de Canadá.",features:[
+    ["Enviar los requisitos","Ya puedes escribir Info Visa USA en un chat individual para enviar la lista de requisitos."],
+    ["Iniciar el bot","Envía INICIAR BOT USA en el chat individual del cliente."],
+    ["Detener o reanudar","Envía DETENER BOT USA para detenerlo. INICIAR BOT USA retoma el avance guardado."],
+    ["Expedientes","La tabla muestra únicamente solicitudes USA y permite revisar respuestas, progreso, documentos y notas."],
+    ["Google Drive","Cada cliente USA utiliza una carpeta dentro de una raíz independiente para Visa USA."],
+    ["Almacenamiento","Los expedientes USA viven en una base SQLite separada de los expedientes de Canadá."]
+  ]},
+  eta:{eyebrow:"eTA Canadá",title:"Ayuda del sistema eTA",intro:"Esta pestaña reserva un espacio independiente para las autorizaciones electrónicas de viaje.",features:[
+    ["Estado actual","La automatización de eTA todavía no está habilitada."],
+    ["Inicio y detención","Crearemos comandos propios para que el flujo no se mezcle con las visas regulares de Canadá."],
+    ["Requisitos","Se definirá un mensaje informativo específico para solicitudes eTA."],
+    ["Google Drive","Los documentos se almacenarán en una estructura separada, que se mostrará desde cada expediente eTA."]
+  ]},
+  companies:{eyebrow:"Empresas en Canadá",title:"Ayuda del registro de empresas",intro:"Esta pestaña será el espacio independiente para procesos corporativos en Canadá.",features:[
+    ["Estado actual","El flujo de registro de empresas todavía no está habilitado."],
+    ["Inicio y seguimiento","Se definirán acciones propias para crear, pausar y continuar cada proceso corporativo."],
+    ["Requisitos","Se preparará una lista específica según el tipo de empresa y la provincia de registro."],
+    ["Google Drive","Cada empresa tendrá una carpeta independiente para documentos, formularios y entregables."]
+  ]}
+};
 const $=(selector)=>document.querySelector(selector);
 const el=(tag,className,text)=>{const node=document.createElement(tag);if(className)node.className=className;if(text!==undefined)node.textContent=text;return node};
 
 async function api(url,options={}){
-  const response=await fetch(url,{headers:{"Content-Type":"application/json",...(options.headers||{})},...options});
+  const headers={...(options.headers||{})};if(options.body!==undefined&&!Object.keys(headers).some(key=>key.toLowerCase()==="content-type"))headers["Content-Type"]="application/json";
+  const response=await fetch(url,{...options,headers});
   const data=response.status===204?null:await response.json().catch(()=>({error:"Respuesta inválida"}));
   if(!response.ok){const error=new Error(data?.error||`Error ${response.status}`);error.code=data?.code;error.authorizationUrl=data?.authorizationUrl;throw error}
   return data;
@@ -18,6 +49,53 @@ function initials(name){return(name||"?").split(/\s+/).slice(0,2).map(x=>x[0]).j
 function statusClass(status){return ["ACTIVE","READY_FOR_REVIEW"].includes(status)?"active":["NEEDS_STAFF_REVIEW","WAITING_FOR_CLIENT"].includes(status)?"review":["PAUSED","STOPPED_BY_ADMIN"].includes(status)?"paused":""}
 function formatDate(value){if(value===null||value===undefined||value==="")return"";const match=String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);return match?`${match[3]}/${match[2]}/${match[1]}`:value==="CURRENT"?"ACTUAL":String(value).replace(/^(\d{4})-(\d{2})$/, "$2/$1")}
 function valueText(value){if(value===true)return"Sí";if(value===false)return"No";return value==null?"":formatDate(value)}
+
+function clientPending(client){return Math.max(0,client.progress.required-client.progress.confirmed)}
+function clientSortValue(client,key){
+  if(key==="status")return STATUS[client.status]||client.status;
+  if(key==="progress")return client.progress.percent;
+  if(key==="pending")return clientPending(client);
+  if(key==="documents")return client.documentCount;
+  if(key==="createdAt"||key==="updatedAt")return Date.parse(client[key])||0;
+  return client[key]||"";
+}
+function compareClients(left,right){
+  const {key,direction}=state.clientSort,a=clientSortValue(left,key),b=clientSortValue(right,key);
+  const result=typeof a==="number"&&typeof b==="number"?a-b:String(a).localeCompare(String(b),"es",{numeric:true,sensitivity:"base"});
+  return (direction==="asc"?result:-result)||String(left.id).localeCompare(String(right.id));
+}
+function renderSortHeaders(){
+  document.querySelectorAll(".sort-button").forEach(button=>{
+    const active=button.dataset.sort===state.clientSort.key;
+    button.setAttribute("aria-sort",active?(state.clientSort.direction==="asc"?"ascending":"descending"):"none");
+    let indicator=button.querySelector(".sort-indicator");
+    if(!indicator){indicator=el("span","sort-indicator");button.append(indicator)}
+    indicator.textContent=active?(state.clientSort.direction==="asc"?"▲":"▼"):"↕";
+  });
+}
+async function deleteClientRecord(client,workflow){
+  const service=workflow==="usa"?"Visa USA":"Visa Canadá";
+  const name=client.displayName||client.phone||"este cliente";
+  const confirmed=window.confirm(`¿Eliminar por completo el expediente de ${name}?\n\nServicio: ${service}\n\nSe eliminarán permanentemente el registro, todas sus respuestas, documentos y su carpeta de Google Drive. Esta acción no se puede deshacer.`);
+  if(!confirmed)return;
+  try{
+    const base=workflow==="usa"?"/api/usa/clients":"/api/clients";
+    const result=await api(`${base}/${encodeURIComponent(client.id)}`,{method:"DELETE"});
+    toast(result.driveFolderDeleted===false?"Expediente eliminado; la carpeta de Drive no pudo borrarse":"Expediente eliminado por completo");
+    await (workflow==="usa"?loadUsaClients():loadClients());
+  }catch(error){toast(error.message)}
+}
+function showWorkspace(workspace){
+  document.querySelectorAll(".workspace-tabs button").forEach(button=>button.classList.toggle("active",button.dataset.workspace===workspace));
+  for(const name of ["canada","usa","eta","companies"])$(`#${name}Workspace`).hidden=name!==workspace;
+}
+function showWorkspaceHelp(workspace){
+  const help=WORKSPACE_HELP[workspace];if(!help)return;
+  $("#workspaceHelpEyebrow").textContent=help.eyebrow;$("#workspaceHelpTitle").textContent=help.title;$("#workspaceHelpIntro").textContent=help.intro;
+  const root=$("#workspaceHelpFeatures");root.replaceChildren();
+  for(const [title,description] of help.features){const item=el("div","help-feature");item.append(el("b",null,title),el("span",null,description));root.append(item)}
+  $("#workspaceHelpDialog").showModal();
+}
 
 async function loadSystem(){
   try{
@@ -40,6 +118,14 @@ async function loadClients(){
   state.clients=await api("/api/clients");
   renderMetrics();renderClients();
 }
+async function loadUsaClients(){
+  state.usaClients=await api("/api/usa/clients");
+  $("#usaMetricTotal").textContent=state.usaClients.length;
+  $("#usaMetricActive").textContent=state.usaClients.filter(c=>["ACTIVE","AWAITING_CONSENT","WAITING_FOR_CLIENT"].includes(c.status)).length;
+  $("#usaMetricReview").textContent=state.usaClients.filter(c=>["NEEDS_STAFF_REVIEW","READY_FOR_REVIEW"].includes(c.status)).length;
+  $("#usaMetricDocuments").textContent=state.usaClients.reduce((sum,c)=>sum+c.documentCount,0);
+  renderUsaClients();
+}
 function renderMetrics(){
   $("#metricTotal").textContent=state.clients.length;
   $("#metricActive").textContent=state.clients.filter(c=>["ACTIVE","AWAITING_CONSENT","WAITING_FOR_CLIENT"].includes(c.status)).length;
@@ -48,30 +134,50 @@ function renderMetrics(){
 }
 function renderClients(){
   const query=$("#searchInput").value.trim().toLowerCase(),filter=$("#statusFilter").value;
-  const clients=state.clients.filter(c=>(!filter||c.status===filter)&&(!query||`${c.displayName} ${c.phone}`.toLowerCase().includes(query)));
+  const clients=state.clients.filter(c=>(!filter||c.status===filter)&&(!query||`${c.displayName} ${c.phone}`.toLowerCase().includes(query))).sort(compareClients);
+  renderSortHeaders();
   const body=$("#clientRows");body.replaceChildren();$("#emptyState").hidden=clients.length>0;$("#resultCount").textContent=`${clients.length} registro${clients.length===1?"":"s"}`;
   for(const client of clients){
     const row=el("tr");
     const identity=el("td"),wrap=el("div","client-cell"),avatar=el("div","avatar",initials(client.displayName));
-    const names=el("div");names.append(el("b",null,client.displayName||"Sin nombre"),el("span",null,client.phone));wrap.append(avatar,names);identity.append(wrap);
+    const names=el("div");names.append(el("b",null,client.displayName||"Sin nombre"));wrap.append(avatar,names);identity.append(wrap);
+    const phone=el("td",null,client.phone||"—");
     const status=el("td");status.append(el("span",`badge ${statusClass(client.status)}`,STATUS[client.status]||client.status));
     const progress=el("td"),progressWrap=el("div","progress-cell"),track=el("div","mini-track"),bar=el("i");bar.style.width=`${client.progress.percent}%`;track.append(bar);progressWrap.append(track,el("b",null,`${client.progress.percent}%`));progress.append(progressWrap);
     const docs=el("td"),docWrap=el("div","doc-count");docWrap.append(el("span",null,"▱"),el("b",null,String(client.documentCount)));if(client.pendingDocumentCount)docWrap.append(el("span","badge review",`${client.pendingDocumentCount} pendiente`));docs.append(docWrap);
     const updated=el("td",null,new Date(client.updatedAt).toLocaleString("es-MX",{dateStyle:"medium",timeStyle:"short"}));
-    const action=el("td"),actionWrap=el("div","row-actions"),pdf=el("a","row-pdf","Descargar PDF"),button=el("button","row-open","Abrir →");
+    const action=el("td"),actionWrap=el("div","row-actions"),pdf=el("a","row-pdf","Descargar PDF"),button=el("button","row-open","Abrir →"),remove=el("button","row-delete","🗑️");
     pdf.href=`/api/clients/${encodeURIComponent(client.id)}/pdf`;pdf.setAttribute("download","");pdf.onclick=(event)=>event.stopPropagation();
-    button.onclick=()=>openClient(client.id);actionWrap.append(pdf,button);action.append(actionWrap);
-    row.append(identity,status,progress,docs,updated,action);row.ondblclick=()=>openClient(client.id);body.append(row);
+    button.onclick=()=>openClient(client.id);remove.title="Eliminar expediente";remove.setAttribute("aria-label",`Eliminar expediente de ${client.displayName||client.phone}`);remove.onclick=(event)=>{event.stopPropagation();void deleteClientRecord(client,"canada")};actionWrap.append(pdf,button,remove);action.append(actionWrap);
+    const pendingCount=clientPending(client),pending=el("td");pending.append(el("span",pendingCount?"badge review":"badge active",String(pendingCount)));
+    const created=el("td",null,new Date(client.createdAt).toLocaleDateString("es-MX",{dateStyle:"medium"}));
+    row.append(identity,phone,status,progress,pending,docs,created,updated,action);row.ondblclick=()=>openClient(client.id);body.append(row);
   }
 }
 
-async function openClient(id){
-  state.current=await api(`/api/clients/${encodeURIComponent(id)}`);
+function renderUsaClients(){
+  const query=$("#usaSearchInput").value.trim().toLowerCase();
+  const clients=state.usaClients.filter(c=>!query||`${c.displayName} ${c.phone}`.toLowerCase().includes(query)).sort(compareClients);
+  const body=$("#usaClientRows");body.replaceChildren();$("#usaEmptyState").hidden=clients.length>0;$("#usaResultCount").textContent=`${clients.length} registro${clients.length===1?"":"s"}`;
+  for(const client of clients){
+    const row=el("tr"),identity=el("td"),wrap=el("div","client-cell"),avatar=el("div","avatar",initials(client.displayName)),names=el("div");names.append(el("b",null,client.displayName||"Sin nombre"));wrap.append(avatar,names);identity.append(wrap);
+    const phone=el("td",null,client.phone||"—"),status=el("td");status.append(el("span",`badge ${statusClass(client.status)}`,STATUS[client.status]||client.status));
+    const progress=el("td"),progressWrap=el("div","progress-cell"),track=el("div","mini-track"),bar=el("i");bar.style.width=`${client.progress.percent}%`;track.append(bar);progressWrap.append(track,el("b",null,`${client.progress.percent}%`));progress.append(progressWrap);
+    const pendingCount=clientPending(client),pending=el("td");pending.append(el("span",pendingCount?"badge review":"badge active",String(pendingCount)));
+    const docs=el("td",null,String(client.documentCount)),created=el("td",null,new Date(client.createdAt).toLocaleDateString("es-MX",{dateStyle:"medium"})),updated=el("td",null,new Date(client.updatedAt).toLocaleString("es-MX",{dateStyle:"medium",timeStyle:"short"}));
+    const action=el("td"),actionWrap=el("div","row-actions"),button=el("button","row-open","Abrir →"),remove=el("button","row-delete","🗑️");button.onclick=()=>openClient(client.id,"usa");remove.title="Eliminar expediente";remove.setAttribute("aria-label",`Eliminar expediente de ${client.displayName||client.phone}`);remove.onclick=(event)=>{event.stopPropagation();void deleteClientRecord(client,"usa")};actionWrap.append(button,remove);action.append(actionWrap);row.append(identity,phone,status,progress,pending,docs,created,updated,action);row.ondblclick=()=>openClient(client.id,"usa");body.append(row);
+  }
+}
+
+function currentClientBase(){return state.currentWorkflow==="usa"?"/api/usa/clients":"/api/clients"}
+async function openClient(id,workflow="canada"){
+  state.currentWorkflow=workflow;
+  state.current=await api(`${currentClientBase()}/${encodeURIComponent(id)}`);
   const c=state.current;$("#detailAvatar").textContent=initials(c.displayName);$("#detailName").value=c.displayName;$("#detailPhone").textContent=c.phoneE164;
   $("#detailPercent").textContent=`${c.progress.percent}%`;$("#detailProgressBar").style.width=`${c.progress.percent}%`;
   const answer=(id)=>valueText(c.answers[id]?.value)||"Sin dato";
   $("#quickEmail").textContent=answer("contact.email");$("#quickPhone").textContent=answer("contact.phone");$("#quickAddress").textContent=answer("contact.residential_address");
-  $("#downloadPdf").href=`/api/clients/${encodeURIComponent(c.id)}/pdf`;
+  $("#downloadPdf").href=`${currentClientBase()}/${encodeURIComponent(c.id)}/pdf`;
   $("#emailPdf").disabled=!c.answers["contact.email"]?.value;$("#emailPdf").title=c.answers["contact.email"]?.value?`Enviar a ${c.answers["contact.email"].value}`:"El cliente todavía no ha proporcionado su correo";
   const select=$("#detailStatus");select.replaceChildren(...Object.entries(STATUS).map(([value,label])=>{const option=el("option",null,label);option.value=value;option.selected=value===c.status;return option}));
   $("#detailNotes").value=c.notes||"";renderInformation();renderDocuments();renderCustom();showTab("information");if(!$("#clientDialog").open)$("#clientDialog").showModal();
@@ -87,7 +193,7 @@ function renderFieldRow(field,compact=false){
     input=el(multiline?"textarea":"input");input.value=current;input.placeholder=answer?.status==="PENDING"?"Pendiente":"Sin dato";input.title=current;
     if(multiline)input.rows=Math.min(3,Math.max(2,Math.ceil(current.length/65)));else if(field.kind==="email")input.type="email";
   }
-  input.onchange=async()=>{if(!input.value)return;try{await api(`/api/clients/${state.current.id}/answers/${encodeURIComponent(field.id)}`,{method:"PUT",body:JSON.stringify({value:input.value})});toast("Dato guardado");await openClient(state.current.id)}catch(error){toast(error.message)}};
+  input.onchange=async()=>{if(!input.value)return;try{await api(`${currentClientBase()}/${state.current.id}/answers/${encodeURIComponent(field.id)}`,{method:"PUT",body:JSON.stringify({value:input.value})});toast("Dato guardado");await openClient(state.current.id,state.currentWorkflow)}catch(error){toast(error.message)}};
   const status=el("span","field-status",answer?{CONFIRMED:"Confirmado",PENDING:"Pendiente",PROPOSED:"Propuesto",CONFLICT:"Conflicto"}[answer.status]:"Faltante");status.title=status.textContent;control.append(input,status);row.append(label,control);return row;
 }
 function renderSectionCard(section,fields){
@@ -135,29 +241,34 @@ function renderDocuments(){
   if(!state.current.documents.length)grid.append(el("p",null,"Todavía no hay documentos guardados."));root.append(grid);$("#documentBadge").textContent=state.current.documents.length;
 }
 function renderCustom(){
-  const root=$("#customFields");root.replaceChildren();for(const item of state.current.customFields){const row=el("div","custom-item");row.append(el("b",null,item.label),el("span",null,item.value));const remove=el("button",null,"Eliminar");remove.onclick=async()=>{await api(`/api/clients/${state.current.id}/custom-fields/${item.id}`,{method:"DELETE"});await refreshCurrent()};row.append(remove);root.append(row)}
+  const root=$("#customFields");root.replaceChildren();for(const item of state.current.customFields){const row=el("div","custom-item");row.append(el("b",null,item.label),el("span",null,item.value));const remove=el("button",null,"Eliminar");remove.onclick=async()=>{await api(`${currentClientBase()}/${state.current.id}/custom-fields/${item.id}`,{method:"DELETE"});await refreshCurrent()};row.append(remove);root.append(row)}
 }
-async function refreshCurrent(){await openClient(state.current.id);await loadClients()}
+async function refreshCurrent(){await openClient(state.current.id,state.currentWorkflow);await (state.currentWorkflow==="usa"?loadUsaClients():loadClients())}
 function showTab(tab){document.querySelectorAll(".tabs button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));for(const name of ["information","documents","extras"])$(`#${name}Tab`).hidden=name!==tab}
 
 for(const [value,label] of Object.entries(STATUS)){const option=el("option",null,label);option.value=value;$("#statusFilter").append(option)}
+document.querySelectorAll(".sort-button").forEach(button=>button.onclick=()=>{const key=button.dataset.sort;state.clientSort=state.clientSort.key===key?{key,direction:state.clientSort.direction==="asc"?"desc":"asc"}:{key,direction:"asc"};renderClients()});
+document.querySelectorAll(".workspace-tabs button").forEach(button=>button.onclick=()=>showWorkspace(button.dataset.workspace));
+document.querySelectorAll(".help-button").forEach(button=>button.onclick=()=>showWorkspaceHelp(button.dataset.help));
+$("#closeWorkspaceHelp").onclick=()=>$("#workspaceHelpDialog").close();
 $("#searchInput").oninput=renderClients;$("#statusFilter").onchange=renderClients;$("#closeDialog").onclick=()=>$("#clientDialog").close();$("#closeSetup").onclick=()=>$("#setupDialog").close();
+$("#usaSearchInput").oninput=renderUsaClients;
 document.querySelectorAll(".tabs button").forEach(button=>button.onclick=()=>showTab(button.dataset.tab));
 $("#whatsappStatus").onclick=()=>{if(state.system?.whatsapp.state==="QR")$("#setupDialog").showModal();else toast(state.system?.whatsapp.lastError||`WhatsApp: ${state.system?.whatsapp.state}`)};
 $("#backupButton").onclick=async()=>{try{const data=await api("/api/system/backup",{method:"POST"});toast(`Respaldo creado: ${data.filename}`)}catch(error){toast(error.message)}};
-$("#detailName").onchange=async()=>{try{await api(`/api/clients/${state.current.id}/answers/identity.full_name`,{method:"PUT",body:JSON.stringify({value:$("#detailName").value})});toast("Nombre actualizado");await refreshCurrent()}catch(error){toast(error.message)}};
-$("#detailStatus").onchange=async()=>{await api(`/api/clients/${state.current.id}`,{method:"PATCH",body:JSON.stringify({status:$("#detailStatus").value})});toast("Estado actualizado");await loadClients()};
+$("#detailName").onchange=async()=>{try{await api(`${currentClientBase()}/${state.current.id}/answers/identity.full_name`,{method:"PUT",body:JSON.stringify({value:$("#detailName").value})});toast("Nombre actualizado");await refreshCurrent()}catch(error){toast(error.message)}};
+$("#detailStatus").onchange=async()=>{await api(`${currentClientBase()}/${state.current.id}`,{method:"PATCH",body:JSON.stringify({status:$("#detailStatus").value})});toast("Estado actualizado");await (state.currentWorkflow==="usa"?loadUsaClients():loadClients())};
 $("#fieldSearch").oninput=renderInformation;
 $("#pendingOnly").onclick=()=>{state.pendingOnly=!state.pendingOnly;$("#pendingOnly").classList.toggle("active",state.pendingOnly);$("#pendingOnly").textContent=state.pendingOnly?"Mostrar todos los datos":"Mostrar sólo pendientes";renderInformation()};
 $("#emailPdf").onclick=async()=>{
   const email=state.current?.answers?.["contact.email"]?.value;if(!email)return toast("El cliente todavía no tiene correo confirmado");
   if(!window.confirm(`Se enviará el expediente PDF a ${email}. ¿Deseas continuar?`))return;
   const button=$("#emailPdf"),original=button.textContent;button.disabled=true;button.textContent="Enviando…";
-  try{const result=await api(`/api/clients/${state.current.id}/pdf/email`,{method:"POST",body:"{}"});toast(`PDF enviado correctamente a ${result.recipient}`)}
+  try{const result=await api(`${currentClientBase()}/${state.current.id}/pdf/email`,{method:"POST",body:"{}"});toast(`PDF enviado correctamente a ${result.recipient}`)}
   catch(error){if(["GMAIL_REAUTH_REQUIRED","GOOGLE_NOT_CONNECTED"].includes(error.code)&&error.authorizationUrl){if(window.confirm(`${error.message}\n\n¿Quieres autorizar Google ahora?`))window.location.href=error.authorizationUrl}else toast(error.message)}
   finally{button.textContent=original;button.disabled=!state.current?.answers?.["contact.email"]?.value}
 };
-$("#saveNotes").onclick=async()=>{await api(`/api/clients/${state.current.id}`,{method:"PATCH",body:JSON.stringify({notes:$("#detailNotes").value})});toast("Notas guardadas")};
-$("#customFieldForm").onsubmit=async(event)=>{event.preventDefault();const form=new FormData(event.target);try{await api(`/api/clients/${state.current.id}/custom-fields`,{method:"POST",body:JSON.stringify({label:form.get("label"),value:form.get("value")})});event.target.reset();await refreshCurrent();toast("Dato agregado")}catch(error){toast(error.message)}};
+$("#saveNotes").onclick=async()=>{await api(`${currentClientBase()}/${state.current.id}`,{method:"PATCH",body:JSON.stringify({notes:$("#detailNotes").value})});toast("Notas guardadas")};
+$("#customFieldForm").onsubmit=async(event)=>{event.preventDefault();const form=new FormData(event.target);try{await api(`${currentClientBase()}/${state.current.id}/custom-fields`,{method:"POST",body:JSON.stringify({label:form.get("label"),value:form.get("value")})});event.target.reset();await refreshCurrent();toast("Dato agregado")}catch(error){toast(error.message)}};
 
-await Promise.all([loadSystem(),loadClients()]);setInterval(loadSystem,3000);setInterval(loadClients,10000);
+await Promise.all([loadSystem(),loadClients(),loadUsaClients()]);setInterval(loadSystem,3000);setInterval(()=>void Promise.all([loadClients(),loadUsaClients()]),10000);

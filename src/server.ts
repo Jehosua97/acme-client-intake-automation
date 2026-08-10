@@ -9,10 +9,13 @@ import { loadConfig } from "./config.js";
 import { catalogFor } from "./domain/catalog.js";
 import { CASE_STATUSES, type CaseStatus, type Progress } from "./domain/types.js";
 import { clientPdfFilename, generateClientPdf, reportSectionTitleForField, type ClientPdfData } from "./infrastructure/client-pdf.js";
-import { SQLiteStore, type StoredDocument } from "./infrastructure/sqlite-store.js";
+import { SQLiteStore, type StoreWorkflow, type StoredDocument } from "./infrastructure/sqlite-store.js";
 import { GoogleDriveService } from "./infrastructure/google-drive.js";
 import { WhatsAppLocalService } from "./infrastructure/whatsapp-local.js";
 import { FullBackupService } from "./infrastructure/full-backup.js";
+import { calculateUsaProgress, newUsaCase } from "./domain/usa-engine.js";
+import { usaCatalogFor, usaFieldById } from "./domain/usa-catalog.js";
+import { usaCrossFieldIssues, usaImmediateConsistencyIssue } from "./domain/usa-consistency.js";
 
 const config = loadConfig();
 if (!["127.0.0.1", "localhost", "::1"].includes(config.HOST)) {
@@ -23,8 +26,21 @@ await mkdir(config.dataDir, { recursive: true });
 const store = new SQLiteStore(config.databasePath);
 const drive = new GoogleDriveService(config, store);
 await drive.initialize();
-const fullBackup = new FullBackupService(path.resolve("."), config.fullBackupOutputDir, store);
-const whatsapp = new WhatsAppLocalService(config, store, drive, fullBackup);
+const usaWorkflow: StoreWorkflow = {
+  kind: "USA",
+  newCase: newUsaCase,
+  catalogFor: usaCatalogFor,
+  fieldById: usaFieldById,
+  calculateProgress: calculateUsaProgress,
+  immediateConsistencyIssue: usaImmediateConsistencyIssue,
+  crossFieldIssues: usaCrossFieldIssues,
+};
+const usaStore = new SQLiteStore(path.join(config.dataDir, "usa", "bot.sqlite"), usaWorkflow);
+const usaConfig = { ...config, GOOGLE_DRIVE_ROOT_FOLDER_NAME: config.GOOGLE_DRIVE_USA_ROOT_FOLDER_NAME };
+const usaDrive = new GoogleDriveService(usaConfig, usaStore);
+await usaDrive.initialize();
+const fullBackup = new FullBackupService(path.resolve("."), config.fullBackupOutputDir, [store, usaStore]);
+const whatsapp = new WhatsAppLocalService(config, store, drive, fullBackup, usaStore, usaDrive);
 const app = Fastify({ logger: true, logController: new LogController({ disableRequestLogging: true }), bodyLimit: 1024 * 1024 });
 
 const STATUS_LABELS: Record<CaseStatus, string> = {
@@ -42,9 +58,9 @@ const STATUS_LABELS: Record<CaseStatus, string> = {
   DELETION_REQUESTED: "Borrado solicitado",
 };
 
-function clientPdfData(id: string): ClientPdfData | null {
-  const caseRecord = store.getCaseById(id);
-  const details = store.getClientDetails(id);
+function clientPdfData(id: string, targetStore = store, targetCatalog: typeof catalogFor = catalogFor): ClientPdfData | null {
+  const caseRecord = targetStore.getCaseById(id);
+  const details = targetStore.getClientDetails(id);
   if (!caseRecord || !details) return null;
   const displayName = String(details.displayName || caseRecord.answers["identity.full_name"]?.value || caseRecord.phoneE164 || "Cliente");
   const emailAnswer = caseRecord.answers["contact.email"];
@@ -57,7 +73,7 @@ function clientPdfData(id: string): ClientPdfData | null {
     statusLabel: STATUS_LABELS[caseRecord.status],
     progress: details.progress as Progress,
     answers: caseRecord.answers,
-    fields: catalogFor(caseRecord.answers),
+    fields: targetCatalog(caseRecord.answers),
     documents: details.documents as StoredDocument[],
     customFields: details.customFields as Array<{ label: string; value: string }>,
   };
@@ -81,6 +97,7 @@ app.get("/api/system/status", async () => ({
   whatsapp: whatsapp.status(),
   googleDrive: drive.status(),
   databasePath: config.databasePath,
+  usaDatabasePath: path.join(config.dataDir, "usa", "bot.sqlite"),
 }));
 
 app.get("/auth/google", async (_request, reply) => {
@@ -92,15 +109,95 @@ app.get("/auth/google/callback", async (request, reply) => {
   const query = z.object({ code: z.string().min(1) }).safeParse(request.query);
   if (!query.success) return reply.code(400).type("text/plain").send("Google no devolvió un código válido.");
   await drive.authorize(query.data.code);
+  await usaDrive.initialize();
   return reply.redirect("/?google=connected");
 });
 
 app.post("/api/google/disconnect", async () => {
   await drive.disconnect();
+  await usaDrive.disconnect();
   return { ok: true };
 });
 
 app.get("/api/clients", async () => store.listClients());
+app.get("/api/usa/clients", async () => usaStore.listClients());
+
+app.get("/api/usa/clients/:id", async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  const details = usaStore.getClientDetails(id);
+  if (!details) return reply.code(404).send({ error: "Cliente USA no encontrado" });
+  const caseRecord = usaStore.getCaseById(id)!;
+  const fields = usaCatalogFor(caseRecord.answers).map(({ applies: _applies, ...field }) => ({ ...field, displaySection: field.section }));
+  return { ...details, fields };
+});
+
+app.delete("/api/usa/clients/:id", async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  if (!usaStore.getCaseById(id)) return reply.code(404).send({ error: "Cliente USA no encontrado" });
+  let driveFolderDeleted = true;
+  try { await usaDrive.deleteClientFolder(id); }
+  catch (error) { driveFolderDeleted = false; app.log.warn({ error, clientId: id }, "No fue posible eliminar la carpeta USA de Drive; se eliminará el registro local"); }
+  usaStore.deleteClient(id);
+  return { ok: true, driveFolderDeleted };
+});
+
+app.patch("/api/usa/clients/:id", async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  const body = z.object({ displayName: z.string().trim().min(1).max(120).optional(), notes: z.string().max(10_000).optional(), status: z.enum(CASE_STATUSES).optional() }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: body.error.issues[0]?.message });
+  try { usaStore.updateClient(id, body.data); return { ok: true }; } catch { return reply.code(404).send({ error: "Cliente USA no encontrado" }); }
+});
+
+app.put("/api/usa/clients/:id/answers/:fieldId", async (request, reply) => {
+  const { id, fieldId } = request.params as { id: string; fieldId: string };
+  const body = z.object({ value: z.union([z.string(), z.number(), z.boolean()]) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: "value es obligatorio" });
+  const raw = typeof body.data.value === "boolean" ? (body.data.value ? "Sí" : "No") : String(body.data.value);
+  try {
+    const answer = usaStore.setStaffAnswer(id, fieldId, raw);
+    if (fieldId === "identity.full_name") await usaDrive.syncClientFolderName(id).catch(() => {});
+    return { answer };
+  } catch (error) {
+    const message = (error as Error).message;
+    if (message === "CLIENT_NOT_FOUND") return reply.code(404).send({ error: "Cliente USA no encontrado" });
+    if (message === "FIELD_NOT_APPLICABLE") return reply.code(409).send({ error: "Campo desconocido o no aplicable" });
+    if (message.startsWith("INVALID_VALUE:")) return reply.code(400).send({ error: message.slice(14) });
+    throw error;
+  }
+});
+
+app.get("/api/usa/clients/:id/pdf", async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  const data = clientPdfData(id, usaStore, usaCatalogFor);
+  if (!data) return reply.code(404).send({ error: "Cliente USA no encontrado" });
+  const filename = clientPdfFilename(data.displayName);
+  const pdf = await generateClientPdf(data);
+  usaStore.audit(id, "CLIENT_PDF_DOWNLOADED", { filename, bytes: pdf.length });
+  return reply.type("application/pdf").header("Content-Disposition", attachmentHeader(filename)).send(pdf);
+});
+
+app.post("/api/usa/clients/:id/pdf/email", async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  const data = clientPdfData(id, usaStore, usaCatalogFor);
+  if (!data?.email) return reply.code(409).send({ code: "CLIENT_EMAIL_MISSING", error: "El cliente todavía no tiene un correo confirmado." });
+  const filename = clientPdfFilename(data.displayName);
+  const pdf = await generateClientPdf(data);
+  const messageId = await usaDrive.sendClientPdf(data.email, data.displayName, filename, pdf);
+  usaStore.audit(id, "CLIENT_PDF_EMAILED", { recipient: data.email, filename, messageId });
+  return { ok: true, recipient: data.email, filename, messageId };
+});
+
+app.post("/api/usa/clients/:id/custom-fields", async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  const body = z.object({ label: z.string().trim().min(1).max(120), value: z.string().trim().min(1).max(5_000) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: body.error.issues[0]?.message });
+  return reply.code(201).send(usaStore.addCustomField(id, body.data.label, body.data.value));
+});
+
+app.delete("/api/usa/clients/:id/custom-fields/:customFieldId", async (request) => {
+  const { id, customFieldId } = request.params as { id: string; customFieldId: string };
+  usaStore.deleteCustomField(id, customFieldId); return { ok: true };
+});
 
 app.get("/api/clients/:id", async (request, reply) => {
   const id = (request.params as { id: string }).id;
@@ -113,6 +210,16 @@ app.get("/api/clients/:id", async (request, reply) => {
     return { ...field, displaySection };
   });
   return { ...details, fields };
+});
+
+app.delete("/api/clients/:id", async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  if (!store.getCaseById(id)) return reply.code(404).send({ error: "Cliente no encontrado" });
+  let driveFolderDeleted = true;
+  try { await drive.deleteClientFolder(id); }
+  catch (error) { driveFolderDeleted = false; app.log.warn({ error, clientId: id }, "No fue posible eliminar la carpeta de Drive; se eliminará el registro local"); }
+  store.deleteClient(id);
+  return { ok: true, driveFolderDeleted };
 });
 
 app.get("/api/clients/:id/pdf", async (request, reply) => {
@@ -206,10 +313,14 @@ app.delete("/api/clients/:id/custom-fields/:customFieldId", async (request) => {
 app.post("/api/system/backup", async () => {
   const directory = path.join(config.dataDir, "backups");
   await mkdir(directory, { recursive: true });
-  const filename = `bot-${new Date().toISOString().replace(/[:.]/g, "-")}.sqlite`;
+  const suffix = new Date().toISOString().replace(/[:.]/g, "-");
+  const filename = `bot-${suffix}.sqlite`;
+  const usaFilename = `usa-bot-${suffix}.sqlite`;
   const target = path.join(directory, filename);
+  const usaTarget = path.join(directory, usaFilename);
   await backup(store.db, target);
-  return { ok: true, filename, path: target };
+  await backup(usaStore.db, usaTarget);
+  return { ok: true, filename, path: target, usaFilename, usaPath: usaTarget };
 });
 
 app.setErrorHandler((error, _request, reply) => {
@@ -220,6 +331,7 @@ app.setErrorHandler((error, _request, reply) => {
 app.addHook("onClose", async () => {
   await whatsapp.stop();
   store.close();
+  usaStore.close();
 });
 
 await app.listen({ host: config.HOST, port: config.PORT });

@@ -3,11 +3,33 @@ import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { calculateProgress, newCase } from "../domain/engine.js";
-import { fieldById } from "../domain/catalog.js";
+import { catalogFor, fieldById } from "../domain/catalog.js";
 import { crossFieldIssues, derivedEmploymentUntil, immediateConsistencyIssue } from "../domain/consistency.js";
 import type { Answer, CaseRecord, CaseStatus } from "../domain/types.js";
 import { validateAnswer } from "../domain/validation.js";
 import { resolveAddressInput } from "../domain/address.js";
+
+export interface StoreWorkflow {
+  kind: "CANADA" | "USA";
+  newCase: typeof newCase;
+  catalogFor: typeof import("../domain/catalog.js").catalogFor;
+  fieldById: typeof fieldById;
+  calculateProgress: typeof calculateProgress;
+  immediateConsistencyIssue?: (fieldId: string, value: Answer["value"], answers: Readonly<Record<string, Answer>>) => string | null;
+  crossFieldIssues?: (answers: Readonly<Record<string, Answer>>) => string[];
+  derivedAnswer?: (fieldId: string, value: Answer["value"], answers: Readonly<Record<string, Answer>>) => { fieldId: string; value: string } | null;
+}
+
+const CANADA_WORKFLOW: StoreWorkflow = {
+  kind: "CANADA",
+  newCase,
+  catalogFor,
+  fieldById,
+  calculateProgress,
+  immediateConsistencyIssue,
+  crossFieldIssues,
+  derivedAnswer: derivedEmploymentUntil,
+};
 
 export interface ClientSummary {
   id: string;
@@ -19,6 +41,7 @@ export interface ClientSummary {
   progress: ReturnType<typeof calculateProgress>;
   documentCount: number;
   pendingDocumentCount: number;
+  createdAt: string;
   updatedAt: string;
 }
 
@@ -48,7 +71,7 @@ const iso = () => new Date().toISOString();
 export class SQLiteStore {
   readonly db: DatabaseSync;
 
-  constructor(databasePath: string) {
+  constructor(databasePath: string, private readonly workflow: StoreWorkflow = CANADA_WORKFLOW) {
     if (databasePath !== ":memory:") mkdirSync(path.dirname(databasePath), { recursive: true });
     this.db = new DatabaseSync(databasePath, { timeout: 5_000 });
     this.db.exec("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;");
@@ -202,11 +225,15 @@ export class SQLiteStore {
   createCase(chatId: string, phone: string, displayName: string): CaseRecord {
     const existing = this.getCaseByChatId(chatId);
     if (existing) return existing;
-    const caseRecord = newCase(randomUUID(), phone);
+    const caseRecord = this.workflow.newCase(randomUUID(), phone);
     this.db.prepare(`INSERT INTO clients(id,chat_id,phone,display_name,status,current_field_id,consent_version,invited_at,consented_at,created_at,updated_at)
       VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
       caseRecord.id, chatId, phone, displayName, caseRecord.status, null, null, null, null, caseRecord.createdAt, caseRecord.updatedAt,
     );
+    // Persist workflow metadata immediately. Both questionnaires use a hidden
+    // schema-version answer so an expediente keeps the question order it began
+    // with, even when staff edits it before the first WhatsApp response.
+    this.saveCase(caseRecord);
     this.addChatAlias(caseRecord.id, chatId);
     this.audit(caseRecord.id, "CLIENT_CREATED", { chatId });
     return caseRecord;
@@ -277,9 +304,10 @@ export class SQLiteStore {
         displayName: String(row.display_name),
         status: caseRecord.status,
         currentFieldId: caseRecord.currentFieldId,
-        progress: calculateProgress(caseRecord),
+        progress: this.workflow.calculateProgress(caseRecord),
         documentCount: Number(row.document_count),
         pendingDocumentCount: Number(row.pending_count),
+        createdAt: String(row.created_at),
         updatedAt: String(row.updated_at),
       };
     });
@@ -296,7 +324,7 @@ export class SQLiteStore {
       notes: row.notes,
       driveFolderId: row.drive_folder_id,
       driveFolderLink: row.drive_folder_link,
-      progress: calculateProgress(caseRecord),
+      progress: this.workflow.calculateProgress(caseRecord),
       documents: this.listDocuments(id),
       customFields: this.listCustomFields(id),
     };
@@ -311,20 +339,29 @@ export class SQLiteStore {
     this.audit(id, "CLIENT_UPDATED", { fields: Object.keys(changes) });
   }
 
+  deleteClient(id: string): void {
+    if (!this.getCaseById(id)) throw new Error("CLIENT_NOT_FOUND");
+    this.transaction(() => {
+      this.db.prepare("DELETE FROM answer_history WHERE client_id=?").run(id);
+      this.db.prepare("DELETE FROM audit_events WHERE client_id=?").run(id);
+      this.db.prepare("DELETE FROM clients WHERE id=?").run(id);
+    });
+  }
+
   setStaffAnswer(clientId: string, fieldId: string, rawValue: string): Answer {
     const caseRecord = this.getCaseById(clientId);
     if (!caseRecord) throw new Error("CLIENT_NOT_FOUND");
-    const definition = fieldById(fieldId, caseRecord.answers);
+    const definition = this.workflow.fieldById(fieldId, caseRecord.answers);
     if (!definition) throw new Error("FIELD_NOT_APPLICABLE");
     const addressResolution = resolveAddressInput(fieldId, rawValue, caseRecord.answers);
     if (!addressResolution.ok) throw new Error(`INVALID_VALUE:${addressResolution.message}`);
     const validation = validateAnswer(definition, addressResolution.value);
     if (!validation.ok) throw new Error(`INVALID_VALUE:${validation.message}`);
-    const consistencyIssue = immediateConsistencyIssue(fieldId, validation.value, caseRecord.answers);
+    const consistencyIssue = this.workflow.immediateConsistencyIssue?.(fieldId, validation.value, caseRecord.answers) ?? null;
     if (consistencyIssue) throw new Error(`INVALID_VALUE:${consistencyIssue}`);
     const answer: Answer = { fieldId, value: validation.value, status: "CONFIRMED", source: "STAFF", confidence: 100, updatedAt: iso() };
     caseRecord.answers[fieldId] = answer;
-    const derivedUntil = derivedEmploymentUntil(fieldId, validation.value, caseRecord.answers);
+    const derivedUntil = this.workflow.derivedAnswer?.(fieldId, validation.value, caseRecord.answers) ?? null;
     if (derivedUntil) {
       caseRecord.answers[derivedUntil.fieldId] = {
         fieldId: derivedUntil.fieldId,
@@ -335,12 +372,12 @@ export class SQLiteStore {
         updatedAt: iso(),
       };
     }
-    const progress = calculateProgress(caseRecord);
+    const progress = this.workflow.calculateProgress(caseRecord);
     if (caseRecord.status === "NEEDS_STAFF_REVIEW"
       && caseRecord.currentFieldId === null
       && progress.confirmed === progress.required
       && progress.conflicts === 0
-      && crossFieldIssues(caseRecord.answers).length === 0) {
+      && (this.workflow.crossFieldIssues?.(caseRecord.answers).length ?? 0) === 0) {
       caseRecord.status = "READY_FOR_REVIEW";
     }
     this.saveCase(caseRecord);

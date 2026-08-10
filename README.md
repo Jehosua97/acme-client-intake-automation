@@ -1,12 +1,12 @@
-# ACME Client Intake Automation
+# MultiServicios Visa Intake Automation
 
-Local-first, cloud-connected workflow automation for collecting customer information, tracking case progress, and routing documents from WhatsApp to Google Drive.
+Local-first, cloud-connected workflow automation for collecting Canadian and United States visa information, tracking each case, and routing documents from WhatsApp to Google Drive.
 
 This project demonstrates a pragmatic DevOps approach to a real ACME business problem: reducing repetitive follow-up, manual document handling, and incomplete customer files without introducing unnecessary infrastructure.
 
-> **Status:** Functional MVP  
-> **Runtime:** Windows workstation  
-> **Architecture:** Local application + managed cloud storage  
+> **Status:** Functional multi-workflow MVP<br>
+> **Runtime:** Windows workstation<br>
+> **Architecture:** Local application + managed cloud storage<br>
 > **Primary interface:** WhatsApp and a local operations dashboard
 
 ## Business problem
@@ -23,19 +23,25 @@ The solution turns that process into a persistent, auditable workflow while pres
 
 ## Solution overview
 
-- The bot remains silent until the operator sends `INICIAR BOT` in an individual customer chat. One explicitly configured testing phone may also start its own chat.
+- Canada and USA are independent workflows with separate question catalogs, state engines, SQLite databases, dashboard views, and Google Drive roots. Answers never cross between them.
+- The dashboard has tabs for Visa Canada, Visa USA, eTA Canada, and Canadian company registration. Visa Canada and Visa USA are operational; the remaining tabs reserve their own product areas for future workflows.
+- Each dashboard tab includes contextual help for starting and stopping its bot, sending requirements, locating Drive files, and using the available tools.
+- The bot remains silent until the operator sends `INICIAR BOT CANADA` or `INICIAR BOT USA` in an individual customer chat. One explicitly configured testing phone may also start its own chat.
 - Unknown contacts, status messages, broadcasts, and groups receive no automated response.
 - ACME obtains the customer's signed authorization before the operator starts the bot; the chat does not repeat that authorization step.
 - Questions are delivered one at a time and validated according to their data type.
 - Every response and conversation position is persisted, allowing interruption and recovery at any moment.
 - After the last dynamic question, the customer gets one final opportunity to report an accidental correction; the case then stops processing that conversation.
 - Customers can use `SALTAR`, `ALTO`/`PAUSA`/`PAUSAR`/`DETENTE`/`PARA`, `CONTINUAR`, `RESUMEN`, and `PENDIENTES`.
-- Passport images and PDF files are placed in a dedicated Google Drive folder for each customer.
-- The complete applicant name is collected immediately after the passport so every row is identifiable in the dashboard; the client then supplies the birth date, birth city, issuing country, issue date, and expiry date shown on the passport.
+- Passport images and PDF files are placed in the corresponding customer folder under `Clientes - Visa Canada` or `Clientes - Visa USA`.
+- The complete applicant name is collected immediately after the passport so every row is identifiable in the dashboard.
 - New expedients ask whether the applicant has previously traveled to Canada. A previous traveler supplies the most recent entry/exit dates and whether Canadian biometrics are registered (`Sí`, `No`, or `No sé`) instead of being asked for a UCI.
-- A compact local dashboard exposes case status, completion, answers, notes, custom fields, and Drive links in a two-column report view; long activity histories use an editable chronological table.
+- The USA questionnaire uses adaptive sections for additional email and phone history, social networks, employment, education, US destination and family contacts, parents, languages, travel, deportation, and prior visa applications. It validates email, phone, calendar dates, passport chronology, and study/employment periods.
+- Lodging and relative questions can reuse a previously supplied US address or phone. Country history is accepted as one comma-separated message and de-duplicated before storage.
+- A wide local dashboard exposes the most relevant sortable columns, case status, completion, answers, notes, custom fields, and Drive links. Staff can permanently delete a record after an explicit confirmation, including cases still in progress.
 - Family information in both the dashboard and PDF is separated into summary, current partner, previous partner, mother, father, and one block per child.
 - Staff can download a client-safe PDF summary or send the same PDF to the confirmed customer email through Gmail for validation.
+- The operator can send `Info visa Canada` or `Info Visa USA` to deliver a consistently formatted requirements message with the appropriate country flag.
 
 This phase intentionally excludes health, criminal, political, government, organizational, and military questions. It does not use OCR or generative AI.
 
@@ -43,17 +49,22 @@ This phase intentionally excludes health, criminal, political, government, organ
 
 ```mermaid
 flowchart LR
-    O[ACME operator] -->|INICIAR BOT| WA[WhatsApp account]
+    O[ACME operator] -->|INICIAR BOT CANADA / USA| WA[WhatsApp account]
     C[Customer] <--> WA
     WA <--> WJS[whatsapp-web.js]
-    WJS --> FSM[Conversation state engine]
-    FSM <--> DB[(SQLite + WAL)]
+    WJS --> ROUTER{Workflow router}
+    ROUTER --> CA[Canada state engine]
+    ROUTER --> US[USA state engine]
+    CA <--> DBC[(Canada SQLite + WAL)]
+    US <--> DBU[(USA SQLite + WAL)]
     WJS --> Q[Persistent document queue]
-    Q -->|OAuth 2.0| GD[Google Drive]
-    DB <--> API[Fastify local API]
+    Q -->|OAuth 2.0| GD[Separate Canada and USA Drive roots]
+    DBC <--> API[Fastify local API]
+    DBU <--> API
     API <--> UI[Operations dashboard]
     API -->|gmail.send| GM[Gmail API]
-    DB --> BK[Consistent local backups]
+    DBC --> BK[Consistent full backups]
+    DBU --> BK
 ```
 
 The architecture is deliberately hybrid:
@@ -99,7 +110,7 @@ Detailed design: [architecture](docs/architecture.md) and [engineering decisions
 
 ```text
 src/
-  domain/                 Conversation engine, field catalog and validation
+  domain/                 Canada/USA engines, catalogs and validation
   infrastructure/         SQLite, WhatsApp, Google Drive and token encryption
   config.ts               Validated environment configuration
   server.ts               Local API and dashboard server
@@ -133,14 +144,16 @@ The setup command copies `.env.example` to `.env` and generates a unique encrypt
 Create an OAuth 2.0 client of type **Web application** and register a redirect URI that exactly matches the local configuration. Example:
 
 ```text
-PORT=3188
-GOOGLE_REDIRECT_URI=http://127.0.0.1:3188/auth/google/callback
+PORT=3000
+GOOGLE_REDIRECT_URI=http://127.0.0.1:3000/auth/google/callback
 GOOGLE_CLIENT_ID=your_client_id
 GOOGLE_CLIENT_SECRET=your_client_secret
 ORGANIZATION_NAME=MultiServicios
+GOOGLE_DRIVE_ROOT_FOLDER_NAME=Clientes - Visa Canada
+GOOGLE_DRIVE_USA_ROOT_FOLDER_NAME=Clientes - Visa USA
 ```
 
-The full callback belongs under **Authorized redirect URIs**. If a JavaScript origin is configured, it contains only `http://127.0.0.1:3188`.
+The full callback belongs under **Authorized redirect URIs**. If a JavaScript origin is configured, it contains only `http://127.0.0.1:3000`. Replace `3000` in both values when using a different local port.
 
 Enable both **Google Drive API** and **Gmail API** in the API Library. In the OAuth consent screen's **Data access** section, add:
 
@@ -189,16 +202,17 @@ Supervisor and application logs are stored in `.data/logs/`.
 ## Operational workflow
 
 1. The operator opens an individual WhatsApp conversation.
-2. The operator sends `INICIAR BOT` from the linked account.
-3. The bot begins immediately because MultiServicios already holds the signed authorization.
-4. The state engine asks only the next applicable question.
-5. A passport photo or PDF is queued and uploaded to the customer's Drive folder.
-6. The bot asks for the applicant's complete name, which becomes the dashboard row name.
-7. The client supplies the requested passport facts directly in WhatsApp; Mexico is offered as the default issuing country.
-8. The dashboard can download the client-safe PDF or email it to the confirmed customer address for validation.
-9. The bot asks for final corrections, confirms the destination email, and closes automated processing for that case.
+2. The operator optionally sends `Info visa Canada` or `Info Visa USA` to provide the requirements list.
+3. The operator sends `INICIAR BOT CANADA` or `INICIAR BOT USA` from the linked account.
+4. The router selects only the matching workflow and database. A client cannot have both questionnaires actively consuming the same chat.
+5. The state engine asks only the next applicable question and persists the current field after every response.
+6. A passport photo or PDF is queued and uploaded to the customer's folder in the matching Drive root.
+7. The bot asks for the applicant's complete name, which becomes the dashboard row name, and continues through the applicable questionnaire sections.
+8. The customer may pause, resume, request a summary, or skip an unavailable value without losing progress.
+9. The dashboard can edit validated fields, open Drive, download the client-safe PDF, email it to the customer, or permanently delete the record after confirmation.
+10. The bot asks for final corrections, displays the stored contact email without requesting a second confirmation, and closes automated processing for that case.
 
-Sending `DETENER BOT` from the linked operator account stops automation for that individual chat without losing its state. Sending `INICIAR BOT` from the operator account resumes an administratively stopped chat without resetting it.
+Sending `DETENER BOT CANADA` or `DETENER BOT USA` from the linked operator account stops the corresponding automation without losing its state. The matching start command resumes it without resetting it.
 
 Questionnaire changes are versioned when a case is created. Existing expedients keep the field applicability rules under which they were started, while newly created expedients use the latest flow.
 
@@ -208,7 +222,7 @@ For isolated self-service testing, configure exactly one incoming phone in `.env
 TEST_SELF_START_PHONE=+14378781645
 ```
 
-Only that incoming number can start its own conversation by sending `INICIAR BOT`; the same command from every other customer number is ignored.
+Only that incoming number can start its own conversation by sending `INICIAR BOT CANADA` or `INICIAR BOT USA`; the same commands from every other customer number are ignored.
 
 ### Full system backup from WhatsApp
 
@@ -220,6 +234,20 @@ FULL_BACKUP_OUTPUT_DIR=C:\Users\YourUser\OneDrive\Desktop
 ```
 
 From that phone, send `HACER RESPALDO BACKUP` in an individual chat with the bot. Group commands and commands from every other phone are ignored. The operation runs in the background and sends a WhatsApp confirmation when the complete project ZIP has been saved. The WhatsApp browser reconnects automatically after releasing its active session files for compression. A consistent SQLite snapshot is created immediately before compression and included in the archive.
+
+## Operator and information commands
+
+| Command | Behavior |
+|---|---|
+| `INICIAR BOT CANADA` | Starts or resumes the Canadian visa questionnaire |
+| `DETENER BOT CANADA` | Stops the Canadian visa questionnaire without deleting progress |
+| `INICIAR BOT USA` | Starts or resumes the independent USA visa questionnaire |
+| `DETENER BOT USA` | Stops the USA visa questionnaire without deleting progress |
+| `Info visa Canada` | Sends the formatted Canadian visa requirements |
+| `Info Visa USA` | Sends the formatted USA visa requirements |
+| `HACER RESPALDO BACKUP` | Creates a complete project ZIP when sent by the configured backup administrator |
+
+Commands are matched without regard to letter case. Start/stop and backup authorization are enforced using the resolved WhatsApp identity rather than the display name.
 
 ## Customer commands
 
@@ -233,6 +261,8 @@ From that phone, send `HACER RESPALDO BACKUP` in an individual chat with the bot
 | `PENDIENTES` | Lists missing customer-provided information |
 | `AYUDA` | Displays available commands |
 | `BORRAR MIS DATOS` | Creates a staff-reviewed deletion request |
+
+The dashboard trash action is different from `BORRAR MIS DATOS`: it is an operator action that permanently removes the selected local record after a confirmation dialog. It does not require the client case to be stopped first.
 
 ## Quality gates
 
@@ -252,7 +282,8 @@ Runtime data is written under `.data/`:
 
 ```text
 .data/
-  bot.sqlite               Customer data and workflow state
+  bot.sqlite               Canada customer data and workflow state
+  usa/bot.sqlite           Independent USA customer data and workflow state
   whatsapp-session/        Persistent linked-device session
   google-token.enc         Encrypted Google OAuth credentials
   backups/                 On-demand SQLite backups
