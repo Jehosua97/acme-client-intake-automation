@@ -6,17 +6,15 @@ const STATUS = {
 const state={clients:[],usaClients:[],current:null,currentWorkflow:"canada",system:null,pendingOnly:false,clientSort:{key:"updatedAt",direction:"desc"}};
 const WORKSPACE_HELP={
   canada:{eyebrow:"Visa Canadá",title:"Ayuda del sistema de visas canadienses",intro:"Este módulo está activo y concentra el flujo actual de expedientes.",features:[
-    ["Iniciar el bot","Desde la cuenta vinculada, envía INICIAR BOT CANADA en el chat individual del cliente."],
-    ["Detener o reanudar","Envía DETENER BOT CANADA para detener el expediente. INICIAR BOT CANADA permite retomarlo sin perder el avance."],
-    ["Enviar los requisitos","Escribe Info Visa Canada para enviar automáticamente la lista de requisitos al cliente."],
+    ["Iniciar el bot","Desde la cuenta vinculada, envía START BOT CANADA en el chat individual del cliente."],
+    ["Detener o reanudar","Envía STOP BOT para detener cualquier flujo. START BOT CANADA permite retomarlo sin perder el avance."],
     ["Consultar el expediente","Abre un cliente en la tabla para revisar respuestas, progreso, documentos, notas y datos adicionales."],
     ["Archivos en Google Drive","Cada cliente tiene una carpeta propia. Puedes abrirla desde la pestaña Documentos dentro de su expediente."],
     ["PDF y correo","Desde el expediente puedes descargar el resumen PDF o enviarlo al correo confirmado del cliente."]
   ]},
   usa:{eyebrow:"Visa USA",title:"Ayuda del sistema de visas estadounidenses",intro:"Este módulo funciona de manera independiente al sistema de Canadá.",features:[
-    ["Enviar los requisitos","Ya puedes escribir Info Visa USA en un chat individual para enviar la lista de requisitos."],
-    ["Iniciar el bot","Envía INICIAR BOT USA en el chat individual del cliente."],
-    ["Detener o reanudar","Envía DETENER BOT USA para detenerlo. INICIAR BOT USA retoma el avance guardado."],
+    ["Iniciar el bot","Envía START BOT USA en el chat individual del cliente."],
+    ["Detener o reanudar","Envía STOP BOT para detener cualquier flujo. START BOT USA retoma el avance guardado."],
     ["Expedientes","La tabla muestra únicamente solicitudes USA y permite revisar respuestas, progreso, documentos y notas."],
     ["Google Drive","Cada cliente USA utiliza una carpeta dentro de una raíz independiente para Visa USA."],
     ["Almacenamiento","Los expedientes USA viven en una base SQLite separada de los expedientes de Canadá."]
@@ -87,7 +85,7 @@ async function deleteClientRecord(client,workflow){
 }
 function showWorkspace(workspace){
   document.querySelectorAll(".workspace-tabs button").forEach(button=>button.classList.toggle("active",button.dataset.workspace===workspace));
-  for(const name of ["canada","usa","eta","companies"])$(`#${name}Workspace`).hidden=name!==workspace;
+  for(const name of ["canada","usa","eta","companies","manual"])$(`#${name}Workspace`).hidden=name!==workspace;
 }
 function showWorkspaceHelp(workspace){
   const help=WORKSPACE_HELP[workspace];if(!help)return;
@@ -111,7 +109,13 @@ async function loadSystem(){
     if(ds.connected&&ds.rootFolderLink){drive.href=ds.rootFolderLink;drive.target="_blank"}else{drive.href="/auth/google";drive.removeAttribute("target")}
     const qr=state.system.whatsapp.qrDataUrl;
     $("#qrImage").hidden=!qr;$(".qr-placeholder").hidden=Boolean(qr);if(qr)$("#qrImage").src=qr;
+    renderAutomationToggle();
   }catch(error){console.error(error)}
+}
+function renderAutomationToggle(){
+  const button=$("#automationToggle"),paused=Boolean(state.system?.whatsapp?.automationPaused);
+  button.classList.toggle("paused",paused);button.setAttribute("aria-pressed",String(paused));button.title=paused?"Continuar automatización":"Pausar automatización";
+  button.querySelector(".automation-icon").textContent=paused?"▶":"⏸";button.querySelector("b").textContent=paused?"Pausado":"En ejecución";
 }
 
 async function loadClients(){
@@ -256,6 +260,7 @@ $("#usaSearchInput").oninput=renderUsaClients;
 document.querySelectorAll(".tabs button").forEach(button=>button.onclick=()=>showTab(button.dataset.tab));
 $("#whatsappStatus").onclick=()=>{if(state.system?.whatsapp.state==="QR")$("#setupDialog").showModal();else toast(state.system?.whatsapp.lastError||`WhatsApp: ${state.system?.whatsapp.state}`)};
 $("#backupButton").onclick=async()=>{try{const data=await api("/api/system/backup",{method:"POST"});toast(`Respaldo creado: ${data.filename}`)}catch(error){toast(error.message)}};
+$("#automationToggle").onclick=async()=>{const button=$("#automationToggle"),paused=!Boolean(state.system?.whatsapp?.automationPaused);button.disabled=true;try{const data=await api("/api/system/automation",{method:"POST",body:JSON.stringify({paused})});state.system.whatsapp=data.whatsapp;renderAutomationToggle();toast(paused?"Bot pausado: no enviará mensajes automáticos":"Bot reanudado")}catch(error){toast(error.message)}finally{button.disabled=false}};
 $("#detailName").onchange=async()=>{try{await api(`${currentClientBase()}/${state.current.id}/answers/identity.full_name`,{method:"PUT",body:JSON.stringify({value:$("#detailName").value})});toast("Nombre actualizado");await refreshCurrent()}catch(error){toast(error.message)}};
 $("#detailStatus").onchange=async()=>{await api(`${currentClientBase()}/${state.current.id}`,{method:"PATCH",body:JSON.stringify({status:$("#detailStatus").value})});toast("Estado actualizado");await (state.currentWorkflow==="usa"?loadUsaClients():loadClients())};
 $("#fieldSearch").oninput=renderInformation;

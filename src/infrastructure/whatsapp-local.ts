@@ -1,4 +1,6 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
 import QRCode from "qrcode";
 import WhatsAppWeb from "whatsapp-web.js";
 import type { Message } from "whatsapp-web.js";
@@ -11,10 +13,10 @@ import type { FullBackupService } from "./full-backup.js";
 import type { PendingDocument, SQLiteStore } from "./sqlite-store.js";
 
 const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
-const BOT_START_CANADA_COMMAND = "INICIAR BOT CANADA";
-const BOT_STOP_CANADA_COMMAND = "DETENER BOT CANADA";
-const BOT_START_USA_COMMAND = "INICIAR BOT USA";
-const BOT_STOP_USA_COMMAND = "DETENER BOT USA";
+const BOT_START_CANADA_COMMAND = "START BOT CANADA";
+const BOT_START_USA_COMMAND = "START BOT USA";
+const BOT_START_ETA_COMMAND = "START BOT ETA";
+const BOT_STOP_COMMAND = "STOP BOT";
 const FULL_BACKUP_COMMAND = "HACER RESPALDO BACKUP";
 const VISA_CANADA_INFO_COMMAND = "INFO VISA CANADA";
 const VISA_USA_INFO_COMMAND = "INFO VISA USA";
@@ -164,16 +166,31 @@ interface ChatIdentity {
 }
 type WorkflowKind = "CANADA" | "USA";
 
+export type AdminBotCommand = "START_CANADA" | "START_USA" | "START_ETA" | "STOP_ALL";
+
+/** Exact, case-insensitive allow-list. No partial matches or extra words activate the bot. */
+export function parseAdminBotCommand(value: string): AdminBotCommand | null {
+  switch (value.trim().toLocaleUpperCase("es")) {
+    case BOT_START_CANADA_COMMAND: return "START_CANADA";
+    case BOT_START_USA_COMMAND: return "START_USA";
+    case BOT_START_ETA_COMMAND: return "START_ETA";
+    case BOT_STOP_COMMAND: return "STOP_ALL";
+    default: return null;
+  }
+}
+
 export interface WhatsAppRuntimeStatus {
   state: "STARTING" | "QR" | "AUTHENTICATED" | "READY" | "BACKUP" | "DISCONNECTED" | "ERROR";
   qrDataUrl: string | null;
   account: string | null;
   lastError: string | null;
+  automationPaused: boolean;
 }
 
 export class WhatsAppLocalService {
   readonly client: InstanceType<typeof Client>;
-  private runtime: WhatsAppRuntimeStatus = { state: "STARTING", qrDataUrl: null, account: null, lastError: null };
+  private runtime: WhatsAppRuntimeStatus;
+  private readonly automationControlPath: string;
   private workerTimer: NodeJS.Timeout | null = null;
   private workerBusy = false;
   private backupInProgress = false;
@@ -186,6 +203,8 @@ export class WhatsAppLocalService {
     private readonly usaStore: SQLiteStore,
     private readonly usaDrive: GoogleDriveService,
   ) {
+    this.automationControlPath = path.join(config.dataDir, "automation-control.json");
+    this.runtime = { state: "STARTING", qrDataUrl: null, account: null, lastError: null, automationPaused: this.loadAutomationPaused() };
     const executablePath = config.CHROME_EXECUTABLE_PATH || this.findBrowser();
     this.client = new Client({
       authStrategy: new LocalAuth({ dataPath: config.whatsappSessionPath, clientId: config.WHATSAPP_SESSION_ID }),
@@ -200,6 +219,16 @@ export class WhatsAppLocalService {
   }
 
   status(): WhatsAppRuntimeStatus { return { ...this.runtime }; }
+
+  async setAutomationPaused(paused: boolean): Promise<WhatsAppRuntimeStatus> {
+    await mkdir(path.dirname(this.automationControlPath), { recursive: true });
+    const temporary = `${this.automationControlPath}.tmp`;
+    await writeFile(temporary, JSON.stringify({ paused, updatedAt: new Date().toISOString() }), "utf8");
+    await rename(temporary, this.automationControlPath);
+    this.runtime = { ...this.runtime, automationPaused: paused };
+    this.store.audit(null, paused ? "AUTOMATION_PAUSED_FROM_DASHBOARD" : "AUTOMATION_RESUMED_FROM_DASHBOARD", {});
+    return this.status();
+  }
 
   async start(): Promise<void> {
     this.workerTimer = setInterval(() => void this.processPendingDocument(), 3_000);
@@ -216,14 +245,14 @@ export class WhatsAppLocalService {
 
   private bindEvents(): void {
     this.client.on("qr", async (qr) => {
-      this.runtime = { state: "QR", qrDataUrl: await QRCode.toDataURL(qr, { width: 320, margin: 1 }), account: null, lastError: null };
+      this.runtime = { ...this.runtime, state: "QR", qrDataUrl: await QRCode.toDataURL(qr, { width: 320, margin: 1 }), account: null, lastError: null };
     });
     this.client.on("authenticated", () => {
       this.runtime = { ...this.runtime, state: this.backupInProgress ? "BACKUP" : "AUTHENTICATED", qrDataUrl: null, lastError: null };
     });
     this.client.on("ready", () => {
       this.backupInProgress = false;
-      this.runtime = { state: "READY", qrDataUrl: null, account: this.client.info?.wid?._serialized ?? null, lastError: null };
+      this.runtime = { ...this.runtime, state: "READY", qrDataUrl: null, account: this.client.info?.wid?._serialized ?? null, lastError: null };
       void this.recoverRecentStartCommands();
     });
     this.client.on("auth_failure", (message) => { this.runtime = { ...this.runtime, state: "ERROR", lastError: message }; });
@@ -245,9 +274,13 @@ export class WhatsAppLocalService {
     let chatId: string | null = null;
     const messageId = normalizeWhatsAppMessageId(message.id);
     try {
-      const command = message.body.trim().toLocaleUpperCase("es");
-      if (![BOT_START_CANADA_COMMAND, BOT_STOP_CANADA_COMMAND, BOT_START_USA_COMMAND, BOT_STOP_USA_COMMAND, VISA_CANADA_INFO_COMMAND, VISA_USA_INFO_COMMAND].includes(command) || message.isStatus) return;
-      commandReceived = command;
+      const parsedCommand = parseAdminBotCommand(message.body);
+      if (!parsedCommand || message.isStatus) return;
+      if (this.runtime.automationPaused && parsedCommand !== "STOP_ALL") {
+        this.store.audit(null, "ADMIN_COMMAND_IGNORED_WHILE_AUTOMATION_PAUSED", { command: parsedCommand });
+        return;
+      }
+      commandReceived = parsedCommand;
       if (messageId && (this.store.isProcessed(messageId) || this.usaStore.isProcessed(messageId))) return;
       const rawMessageId = message.id as unknown;
       const remoteFromId = rawMessageId && typeof rawMessageId === "object"
@@ -259,26 +292,23 @@ export class WhatsAppLocalService {
         if (messageId) this.store.markProcessed(messageId);
         return;
       }
-      if (command === VISA_CANADA_INFO_COMMAND) {
-        if (messageId) this.store.markProcessed(messageId);
-        await this.client.sendMessage(chatId, VISA_CANADA_INFO_MESSAGE);
-        this.store.audit(null, "VISA_CANADA_INFO_SENT", { chatId, messageId });
-        return;
-      }
-      if (command === VISA_USA_INFO_COMMAND) {
-        if (messageId) this.store.markProcessed(messageId);
-        await this.client.sendMessage(chatId, VISA_USA_INFO_MESSAGE);
-        this.store.audit(null, "VISA_USA_INFO_SENT", { chatId, messageId });
-        return;
-      }
       const identity = await this.resolveChatIdentity(chatId, [remoteFromId, serializedText(message.to)]);
-      const workflow: WorkflowKind = command.endsWith("USA") ? "USA" : "CANADA";
-      if (command === BOT_STOP_CANADA_COMMAND || command === BOT_STOP_USA_COMMAND) {
-        await this.stopCaseByAdmin(chatId, identity, workflow);
+      if (parsedCommand === "STOP_ALL") {
+        await this.stopCaseByAdmin(chatId, identity, "CANADA");
+        await this.stopCaseByAdmin(chatId, identity, "USA");
+        if (messageId) {
+          this.store.markProcessed(messageId);
+          this.usaStore.markProcessed(messageId);
+        }
+      } else if (parsedCommand === "START_ETA") {
+        if (messageId) this.store.markProcessed(messageId);
+        this.store.audit(null, "ETA_START_COMMAND_RECEIVED", { chatId, messageId });
+        await this.client.sendMessage(chatId, "El flujo eTA todavía no está habilitado. No se inició ningún expediente ni se enviarán más mensajes.");
       } else {
+        const workflow: WorkflowKind = parsedCommand === "START_USA" ? "USA" : "CANADA";
         await this.startOrResumeCase(chatId, identity, "OWNER", workflow);
+        if (messageId) this.storeFor(workflow).markProcessed(messageId);
       }
-      if (messageId) this.storeFor(workflow).markProcessed(messageId);
       this.runtime = { ...this.runtime, lastError: null };
     } catch (error) {
       if (commandReceived) this.store.audit(null, "BOT_ADMIN_COMMAND_FAILED", {
@@ -373,6 +403,7 @@ export class WhatsAppLocalService {
   private async handleClientMessage(message: Message): Promise<void> {
     try {
       if (message.isStatus || message.broadcast) return;
+      if (this.runtime.automationPaused) return;
       const messageId = normalizeWhatsAppMessageId(message.id);
       if (!messageId) {
         const rawId = message.id as unknown;
@@ -396,32 +427,8 @@ export class WhatsAppLocalService {
         this.store.markProcessed(messageId);
         return;
       }
-      const incomingCommand = message.body.trim().toLocaleUpperCase("es");
-      if ([BOT_START_CANADA_COMMAND, BOT_START_USA_COMMAND].includes(incomingCommand)) {
-        const workflow: WorkflowKind = incomingCommand === BOT_START_USA_COMMAND ? "USA" : "CANADA";
-        const commandStore = this.storeFor(workflow);
-        const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
-        const authorized = isAuthorizedCommandPhone(identity.phone, this.config.TEST_SELF_START_PHONE);
-        commandStore.markProcessed(messageId);
-        if (!authorized) {
-          commandStore.audit(null, "CLIENT_START_COMMAND_REJECTED", { sourceChatId, resolvedPhone: identity.phone || null, workflow });
-          return;
-        }
-        commandStore.audit(null, "TEST_PHONE_START_COMMAND_RECEIVED", { sourceChatId, resolvedPhone: identity.phone, workflow });
-        await this.startOrResumeCase(sourceChatId, identity, "TEST_PHONE", workflow);
-        return;
-      }
-      if (message.body.trim().toLocaleUpperCase("es") === FULL_BACKUP_COMMAND) {
-        const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
-        const authorized = isAuthorizedBackupPhone(identity.phone, this.config.BACKUP_ADMIN_PHONE);
-        this.store.markProcessed(messageId);
-        if (!authorized) {
-          this.store.audit(null, "FULL_BACKUP_COMMAND_REJECTED", { sourceChatId, resolvedPhone: identity.phone || null });
-          return;
-        }
-        await this.startFullBackup(sourceChatId, messageId);
-        return;
-      }
+      // Incoming client messages can never activate a workflow. Activation is
+      // accepted exclusively from an owner-authored message_create event.
       const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
       const canadaCase = this.caseForIdentity(sourceChatId, identity, "CANADA");
       const usaCase = this.caseForIdentity(sourceChatId, identity, "USA");
@@ -477,7 +484,7 @@ export class WhatsAppLocalService {
   }
 
   private async processPendingDocument(): Promise<void> {
-    if (this.workerBusy || this.runtime.state !== "READY") return;
+    if (this.workerBusy || this.runtime.state !== "READY" || this.runtime.automationPaused) return;
     this.workerBusy = true;
     let job: PendingDocument | null = null;
     let workflow: WorkflowKind = "CANADA";
@@ -605,7 +612,7 @@ export class WhatsAppLocalService {
       // getChats()/message.getChat() currently throws for some WhatsApp LID
       // records. Searching only the activation phrase avoids serializing every
       // chat and lets a recent command survive an application restart.
-      for (const command of [BOT_START_CANADA_COMMAND, BOT_START_USA_COMMAND]) {
+      for (const command of [BOT_START_CANADA_COMMAND, BOT_START_USA_COMMAND, BOT_START_ETA_COMMAND, BOT_STOP_COMMAND]) {
         const messages = await this.client.searchMessages(command, { limit: 25 });
         for (const message of messages) {
           if (!message.fromMe || message.isStatus || message.timestamp < cutoff) continue;
@@ -657,5 +664,14 @@ export class WhatsAppLocalService {
   private setError(error: unknown, changeState = true): void {
     const message = error instanceof Error ? error.message : String(error);
     this.runtime = { ...this.runtime, ...(changeState ? { state: "ERROR" as const } : {}), lastError: message };
+  }
+
+  private loadAutomationPaused(): boolean {
+    try {
+      const saved = JSON.parse(readFileSync(this.automationControlPath, "utf8")) as { paused?: unknown };
+      return saved.paused === true;
+    } catch {
+      return false;
+    }
   }
 }

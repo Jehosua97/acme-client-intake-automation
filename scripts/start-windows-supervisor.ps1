@@ -1,7 +1,9 @@
 [CmdletBinding()]
 param(
   [int]$HealthIntervalSeconds = 15,
-  [int]$RestartDelaySeconds = 10
+  [int]$RestartDelaySeconds = 10,
+  [string]$NodePath = "",
+  [string]$NpmPath = ""
 )
 
 Set-StrictMode -Version Latest
@@ -45,12 +47,14 @@ try {
   }
 
   Set-Location -LiteralPath $repositoryRoot
-  $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
-  $npmPath = (Get-Command npm.cmd -ErrorAction Stop).Source
+  if (-not $NodePath) { $NodePath = (Get-Command node.exe -ErrorAction Stop).Source }
+  if (-not $NpmPath) { $NpmPath = (Get-Command npm.cmd -ErrorAction Stop).Source }
+  if (-not (Test-Path -LiteralPath $NodePath -PathType Leaf)) { throw "Node executable not found: $NodePath" }
+  if (-not (Test-Path -LiteralPath $NpmPath -PathType Leaf)) { throw "npm executable not found: $NpmPath" }
   $buildLog = Join-Path $logDirectory "build.log"
 
   Write-SupervisorLog "Building the production application before startup."
-  & $npmPath run build *>> $buildLog
+  & $NpmPath run build *>> $buildLog
   if ($LASTEXITCODE -ne 0) {
     throw "Production build failed with exit code $LASTEXITCODE. See $buildLog"
   }
@@ -64,7 +68,7 @@ try {
 
     Write-SupervisorLog "Starting Node production process."
     $botProcess = Start-Process `
-      -FilePath $nodePath `
+      -FilePath $NodePath `
       -ArgumentList @("dist/src/server.js") `
       -WorkingDirectory $repositoryRoot `
       -RedirectStandardOutput $stdoutLog `

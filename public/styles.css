@@ -22,6 +22,13 @@ button, input, select, textarea { font-family: inherit; }
 .brand strong, .brand span { display: block; }
 .brand span { font-size: 12px; color: var(--muted); margin-top: 2px; }
 .connections { display: flex; align-items: center; gap: 9px; }
+.automation-toggle { position: sticky; right: 0; display: flex; align-items: center; gap: 9px; min-height: 43px; border: 1px solid #b9d8c9; border-radius: 12px; padding: 6px 12px; background: var(--green-2); color: var(--green); cursor: pointer; }
+.automation-toggle.paused { border-color: #e3b769; background: #fff3df; color: #8a5918; }
+.automation-toggle:disabled { opacity: .6; cursor: wait; }
+.automation-icon { width: 22px; font-size: 18px; line-height: 1; }
+.automation-copy { display: grid; text-align: left; }
+.automation-copy small { font-size: 9px; color: var(--muted); }
+.automation-copy b { font-size: 12px; }
 .connection { border: 1px solid var(--line); background: white; border-radius: 12px; padding: 7px 12px; display: grid; grid-template-columns: 8px auto; column-gap: 8px; text-align: left; color: inherit; text-decoration: none; cursor: pointer; }
 .connection i { width: 8px; height: 8px; border-radius: 50%; background: #aab2ae; grid-row: 1/3; align-self: center; }
 .connection span { font-size: 10px; color: var(--muted); }
@@ -185,6 +192,21 @@ td { border-top: 1px solid #edf0ee; padding: 16px 22px; font-size: 13px; }
 .workspace-help-dialog { border: 0; border-radius: 18px; padding: 32px; width: min(680px, 94vw); max-height: 88vh; overflow: auto; box-shadow: var(--shadow); }
 .workspace-help-dialog::backdrop { background: rgba(17, 28, 24, .54); backdrop-filter: blur(3px); }
 .workspace-help-dialog h2 { margin-bottom: 8px; }
+.operations-manual { margin-top: 30px; padding: 0; }
+.manual-header { padding: 28px; border-bottom: 1px solid var(--line); }
+.manual-header h2 { margin-bottom: 8px; }
+.manual-header > p:last-child { color: var(--muted); margin: 0; }
+.manual-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.manual-grid > section { padding: 26px 28px; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.manual-grid > section:nth-child(even) { border-right: 0; }
+.manual-grid h3 { font-size: 16px; }
+.manual-grid p, .manual-grid li, .manual-grid dd { color: #4d5a55; font-size: 13px; line-height: 1.65; }
+.manual-grid code { background: #edf5f1; color: #14553e; border-radius: 5px; padding: 2px 5px; font-weight: 700; }
+.manual-grid pre { background: #18231f; color: #e8f4ee; border-radius: 10px; padding: 14px; overflow-x: auto; }
+.manual-grid pre code { background: none; color: inherit; padding: 0; }
+.manual-grid dt { margin-top: 12px; }
+.manual-grid dd { margin: 4px 0 0; }
+.manual-warning { border-left: 3px solid var(--gold); background: #fff8eb; padding: 12px 14px; border-radius: 5px 9px 9px 5px; font-size: 12px; line-height: 1.5; }
 .help-intro { color: var(--muted); line-height: 1.5; }
 .help-features { display: grid; gap: 10px; margin-top: 22px; }
 .help-feature { padding: 14px 16px; border: 1px solid var(--line); border-radius: 11px; background: #f8faf8; }
@@ -204,6 +226,9 @@ td { border-top: 1px solid #edf0ee; padding: 16px 22px; font-size: 13px; }
 }
 
 @media (max-width: 850px) {
+  .automation-copy small { display: none; }
+  .manual-grid { grid-template-columns: 1fr; }
+  .manual-grid > section { border-right: 0; }
   .connections .connection span { display: none; }
   .hero { align-items: start; flex-direction: column; }
   .workspace-tabs button { flex: none; }

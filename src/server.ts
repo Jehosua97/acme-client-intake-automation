@@ -100,6 +100,12 @@ app.get("/api/system/status", async () => ({
   usaDatabasePath: path.join(config.dataDir, "usa", "bot.sqlite"),
 }));
 
+app.post("/api/system/automation", async (request, reply) => {
+  const body = z.object({ paused: z.boolean() }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: "El estado paused es obligatorio" });
+  return { ok: true, whatsapp: await whatsapp.setAutomationPaused(body.data.paused) };
+});
+
 app.get("/auth/google", async (_request, reply) => {
   try { return reply.redirect(drive.authorizationUrl()); }
   catch (error) { return reply.code(400).type("text/plain").send(error instanceof Error ? error.message : "Error de configuración"); }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isAuthorizedBackupPhone, isAuthorizedCommandPhone, normalizeWhatsAppMessageId, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
+import { isAuthorizedBackupPhone, isAuthorizedCommandPhone, normalizeWhatsAppMessageId, parseAdminBotCommand, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
 
 describe("WhatsApp message ID normalization", () => {
   it("accepts the serialized ID provided by normal WhatsApp messages", () => {
@@ -40,5 +40,18 @@ describe("WhatsApp full-backup authorization", () => {
     assert.equal(isAuthorizedCommandPhone("+14378781645", "+14378781645"), true);
     assert.equal(isAuthorizedCommandPhone("+14165550123", "+14378781645"), false);
     assert.equal(isAuthorizedCommandPhone("+14378781645", ""), false);
+  });
+});
+
+describe("WhatsApp admin activation commands", () => {
+  it("accepts only the exact reserved start and global stop phrases", () => {
+    assert.equal(parseAdminBotCommand("start bot canada"), "START_CANADA");
+    assert.equal(parseAdminBotCommand(" START BOT USA "), "START_USA");
+    assert.equal(parseAdminBotCommand("start bot eta"), "START_ETA");
+    assert.equal(parseAdminBotCommand("stop bot"), "STOP_ALL");
+    assert.equal(parseAdminBotCommand("please start bot canada"), null);
+    assert.equal(parseAdminBotCommand("iniciar bot canada"), null);
+    assert.equal(parseAdminBotCommand("stop bot usa"), null);
+    assert.equal(parseAdminBotCommand(""), null);
   });
 });

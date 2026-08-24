@@ -13,6 +13,7 @@
       <div><strong id="organizationName">MultiServicios</strong><span>Control de expedientes</span></div>
     </div>
     <div class="connections">
+      <button id="automationToggle" class="automation-toggle" type="button" aria-pressed="false" title="Pausar automatización"><span class="automation-icon">⏸</span><span class="automation-copy"><small>Bot automático</small><b>En ejecución</b></span></button>
       <button id="whatsappStatus" class="connection" type="button"><i></i><span>WhatsApp</span><b>Iniciando</b></button>
       <a id="driveStatus" class="connection" href="/auth/google"><i></i><span>Google Drive</span><b>Conectar</b></a>
       <button id="backupButton" class="icon-button" title="Crear respaldo local" type="button">↧</button>
@@ -22,7 +23,7 @@
   <main>
     <section class="hero">
       <div><p class="eyebrow">Panel local</p><h1>Expedientes de clientes</h1><p>Seguimiento de información y documentos en un solo lugar.</p></div>
-      <div class="start-hint"><span>Para iniciar en WhatsApp</span><strong>Usa INICIAR BOT CANADA o INICIAR BOT USA</strong></div>
+      <div class="start-hint"><span>Activación segura en WhatsApp</span><strong>START BOT CANADA · START BOT USA · STOP BOT</strong></div>
     </section>
 
     <nav class="workspace-tabs" aria-label="Tipos de servicio">
@@ -30,6 +31,7 @@
       <button type="button" data-workspace="usa">🇺🇸 Visa USA</button>
       <button type="button" data-workspace="eta">🇨🇦 eTA Canadá</button>
       <button type="button" data-workspace="companies">🏢 Empresas en Canadá</button>
+      <button type="button" data-workspace="manual">📖 Manual del sistema</button>
     </nav>
 
     <section id="canadaWorkspace" class="workspace-view">
@@ -65,7 +67,7 @@
           </tr></thead>
           <tbody id="clientRows"></tbody>
         </table>
-        <div id="emptyState" class="empty" hidden><div>◎</div><h3>Aún no hay expedientes</h3><p>Abre un chat individual y escribe <strong>INICIAR BOT CANADA</strong>.</p></div>
+        <div id="emptyState" class="empty" hidden><div>◎</div><h3>Aún no hay expedientes</h3><p>Desde la cuenta vinculada, abre el chat y escribe exactamente <strong>START BOT CANADA</strong>.</p></div>
       </div>
     </section>
     </section>
@@ -79,7 +81,7 @@
       </section>
       <section class="panel">
         <div class="panel-toolbar"><div><h2>Clientes · Visa USA</h2><p id="usaResultCount">0 registros</p></div><div class="filters"><button class="help-button" type="button" data-help="usa">? Ayuda</button><label class="search"><span>⌕</span><input id="usaSearchInput" type="search" placeholder="Buscar cliente o teléfono"></label></div></div>
-        <div class="table-wrap"><table><thead><tr><th>Cliente</th><th>Teléfono</th><th>Estado</th><th>Progreso</th><th>Pendientes</th><th>Documentos</th><th>Creado</th><th>Actualizado</th><th></th></tr></thead><tbody id="usaClientRows"></tbody></table><div id="usaEmptyState" class="empty" hidden><div>🇺🇸</div><h3>Aún no hay expedientes USA</h3><p>Abre un chat individual y escribe <strong>INICIAR BOT USA</strong>.</p></div></div>
+        <div class="table-wrap"><table><thead><tr><th>Cliente</th><th>Teléfono</th><th>Estado</th><th>Progreso</th><th>Pendientes</th><th>Documentos</th><th>Creado</th><th>Actualizado</th><th></th></tr></thead><tbody id="usaClientRows"></tbody></table><div id="usaEmptyState" class="empty" hidden><div>🇺🇸</div><h3>Aún no hay expedientes USA</h3><p>Desde la cuenta vinculada, abre el chat y escribe exactamente <strong>START BOT USA</strong>.</p></div></div>
       </section>
     </section>
 
@@ -95,6 +97,20 @@
         <div class="workspace-placeholder-heading"><div><span class="workspace-icon">🏢</span><h2>Registro de empresas en Canadá</h2><p>Espacio preparado para administrar procesos de incorporación empresarial.</p></div><button class="help-button" type="button" data-help="companies">? Ayuda</button></div>
         <div class="module-status"><span>Próximamente</span><p>En los siguientes pasos construiremos aquí los expedientes, requisitos y documentos corporativos.</p></div>
       </div>
+    </section>
+
+    <section id="manualWorkspace" class="workspace-view" hidden>
+      <article class="panel operations-manual">
+        <header class="manual-header"><p class="eyebrow">README operativo</p><h2>Operación, seguridad y recuperación</h2><p>Guía para administrar el bot sin abrir terminales visibles.</p></header>
+        <div class="manual-grid">
+          <section><h3>1. Flujo seguro por cliente</h3><ol><li>Abre un chat individual desde la cuenta de WhatsApp vinculada.</li><li>Envía exactamente <code>START BOT CANADA</code> o <code>START BOT USA</code>.</li><li>El bot crea o retoma solamente ese expediente y conserva el avance.</li><li>Para detener cualquier flujo de ese chat, envía <code>STOP BOT</code>. Detiene Canadá y USA a la vez.</li></ol><div class="manual-warning">Los mensajes del cliente nunca pueden activar el bot. Texto parecido, palabras adicionales, grupos y difusiones se ignoran.</div></section>
+          <section><h3>2. Comandos permitidos</h3><dl><dt><code>START BOT CANADA</code></dt><dd>Inicia o reanuda Visa Canadá.</dd><dt><code>START BOT USA</code></dt><dd>Inicia o reanuda Visa USA.</dd><dt><code>START BOT ETA</code></dt><dd>Reservado; informa que eTA aún no está habilitado y no crea expediente.</dd><dt><code>STOP BOT</code></dt><dd>Detiene todos los flujos abiertos del chat.</dd></dl><p>Mayúsculas/minúsculas no importan; el texto completo sí debe coincidir.</p></section>
+          <section><h3>3. Inicio automático de Windows</h3><p>La tarea programada ejecuta el supervisor oculto, recompila, inicia Node sin ventana, revisa la salud cada 15 segundos y reinicia el proceso tras tres fallas.</p><pre><code>npm run windows:install&#10;npm run windows:status</code></pre><p>Ejecuta la instalación desde PowerShell como administrador para arrancar incluso antes del login. Sin elevación también se instala de forma segura, pero arranca al iniciar sesión.</p></section>
+          <section><h3>4. Detener e iniciar el proceso</h3><pre><code>Stop-ScheduledTask -TaskName "ACME Client Intake Bot"&#10;Start-ScheduledTask -TaskName "ACME Client Intake Bot"</code></pre><p>Para reiniciar, ejecuta primero Stop y después Start. Estos comandos controlan toda la aplicación. <code>STOP BOT</code> solo detiene el flujo del cliente y mantiene el dashboard disponible.</p></section>
+          <section><h3>5. Troubleshooting</h3><ul><li><b>WhatsApp pide QR:</b> pulsa el estado de WhatsApp arriba y escanéalo desde Dispositivos vinculados.</li><li><b>El cliente no recibe nada:</b> confirma que el comando fue enviado por ti, en el chat individual, y que arriba diga “Conectado”.</li><li><b>El panel no abre:</b> ejecuta <code>npm run windows:status</code> y revisa <code>.data/logs/supervisor.log</code>.</li><li><b>Google desconectado:</b> pulsa Google Drive y autoriza de nuevo.</li><li><b>Proceso con error:</b> usa <code>Restart-ScheduledTask</code>; el avance está persistido en SQLite.</li></ul></section>
+          <section><h3>6. Validación antes de producción</h3><ul><li><code>WHATSAPP_AUTOSTART=true</code></li><li><code>WHATSAPP_BROWSER_VISIBLE=false</code></li><li>La tarea programada aparece activa en <code>npm run windows:status</code>.</li><li>WhatsApp y Google Drive figuran conectados.</li><li>Prueba START/STOP con un chat controlado antes de usar clientes reales.</li></ul></section>
+        </div>
+      </article>
     </section>
   </main>
 

@@ -308,3 +308,7 @@ The local architecture remains appropriate while one operator uses one workstati
 `whatsapp-web.js` is not affiliated with or officially supported by WhatsApp. The integration can require maintenance after WhatsApp Web changes, and account restrictions remain possible. This project should use a dedicated account and must not be used for unsolicited or bulk messaging.
 
 The dashboard is intentionally local and has no remote-user authentication. Do not expose it directly to the Internet by changing the host binding.
+
+## License
+
+Released under the [MIT License](LICENSE).
