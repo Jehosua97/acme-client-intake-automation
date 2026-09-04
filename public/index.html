@@ -20,6 +20,12 @@
     </div>
   </header>
 
+  <section id="whatsappAlert" class="system-alert" role="alert" hidden>
+    <div class="system-alert-icon" aria-hidden="true">!</div>
+    <div><strong id="whatsappAlertTitle">WhatsApp está desconectado</strong><span id="whatsappAlertMessage">El bot no puede recibir ni enviar mensajes en este momento.</span></div>
+    <button id="whatsappAlertAction" type="button">Revisar conexión</button>
+  </section>
+
   <main>
     <section class="hero">
       <div><p class="eyebrow">Panel local</p><h1>Expedientes de clientes</h1><p>Seguimiento de información y documentos en un solo lugar.</p></div>
@@ -132,7 +138,7 @@
         <div class="quick-fact"><span>Celular</span><b id="quickPhone">Sin dato</b></div>
         <div class="quick-fact address"><span>Domicilio</span><b id="quickAddress">Sin dato</b></div>
       </div>
-      <nav class="tabs"><button class="active" data-tab="information">Información</button><button data-tab="documents">Documentos <span id="documentBadge">0</span></button><button data-tab="extras">Notas y adicionales</button></nav>
+      <nav class="tabs"><button class="active" data-tab="information">Información</button><button data-tab="activity">Actividad <span id="activityBadge">0</span></button><button data-tab="documents">Documentos <span id="documentBadge">0</span></button><button data-tab="extras">Notas y adicionales</button></nav>
       <section id="informationTab" class="tab-content">
         <div class="information-tools">
           <label class="detail-search"><span>⌕</span><input id="fieldSearch" type="search" placeholder="Buscar cualquier dato del expediente"></label>
@@ -140,6 +146,15 @@
           <span id="visibleFieldCount"></span>
         </div>
         <div id="informationSections" class="information-sections"></div>
+      </section>
+      <section id="activityTab" class="tab-content" hidden>
+        <div class="activity-summary">
+          <article><span>Último mensaje recibido</span><b id="lastIncomingMessage">Sin registro detallado</b><small id="lastIncomingAt"></small></article>
+          <article><span>Última respuesta enviada</span><b id="lastOutgoingMessage">Sin registro detallado</b><small id="lastOutgoingAt"></small></article>
+          <article><span>Errores registrados</span><b id="timelineErrorCount">0</b><small>En este expediente</small></article>
+        </div>
+        <div class="timeline-heading"><div><h3>Línea de tiempo</h3><p>Mensajes, avances, errores y acciones administrativas.</p></div></div>
+        <div id="activityTimeline" class="activity-timeline"></div>
       </section>
       <section id="documentsTab" class="tab-content" hidden></section>
       <section id="extrasTab" class="tab-content" hidden>

@@ -47,6 +47,21 @@ function initials(name){return(name||"?").split(/\s+/).slice(0,2).map(x=>x[0]).j
 function statusClass(status){return ["ACTIVE","READY_FOR_REVIEW"].includes(status)?"active":["NEEDS_STAFF_REVIEW","WAITING_FOR_CLIENT"].includes(status)?"review":["PAUSED","STOPPED_BY_ADMIN"].includes(status)?"paused":""}
 function formatDate(value){if(value===null||value===undefined||value==="")return"";const match=String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);return match?`${match[3]}/${match[2]}/${match[1]}`:value==="CURRENT"?"ACTUAL":String(value).replace(/^(\d{4})-(\d{2})$/, "$2/$1")}
 function valueText(value){if(value===true)return"Sí";if(value===false)return"No";return value==null?"":formatDate(value)}
+function formatTimestamp(value){return value?new Date(value).toLocaleString("es-MX",{dateStyle:"medium",timeStyle:"short"}):""}
+function shortText(value,limit=180){const text=String(value??"").replace(/\s+/g," ").trim();return text.length>limit?`${text.slice(0,limit-1)}…`:text}
+function isTimelineError(event){return /FAILED|ERROR|REJECTED/.test(event.event)}
+
+function renderWhatsAppAlert(status=null,requestError=null){
+  const alert=$("#whatsappAlert"),title=$("#whatsappAlertTitle"),message=$("#whatsappAlertMessage"),button=$("#whatsappAlertAction");
+  if(!requestError&&status?.state==="READY"){alert.hidden=true;return}
+  const needsAttention=requestError||["ERROR","DISCONNECTED","QR"].includes(status?.state);
+  if(!needsAttention){alert.hidden=true;return}
+  alert.hidden=false;alert.classList.toggle("warning",status?.state==="QR");
+  if(requestError){title.textContent="No se puede verificar la conexión";message.textContent="El panel no pudo consultar si WhatsApp está funcionando.";button.textContent="Reintentar";alert.title=requestError.message||"";return}
+  if(status.state==="QR"){title.textContent="WhatsApp necesita vincularse";message.textContent="El bot no recibirá mensajes hasta que se escanee el código QR.";button.textContent="Mostrar QR"}
+  else{title.textContent="WhatsApp está desconectado";message.textContent="El dashboard está disponible, pero el bot no puede recibir ni enviar mensajes. El supervisor intentará recuperarlo.";button.textContent="Ver detalle"}
+  alert.title=status.lastError||"";
+}
 
 function clientPending(client){return Math.max(0,client.progress.required-client.progress.confirmed)}
 function clientSortValue(client,key){
@@ -110,7 +125,8 @@ async function loadSystem(){
     const qr=state.system.whatsapp.qrDataUrl;
     $("#qrImage").hidden=!qr;$(".qr-placeholder").hidden=Boolean(qr);if(qr)$("#qrImage").src=qr;
     renderAutomationToggle();
-  }catch(error){console.error(error)}
+    renderWhatsAppAlert(state.system.whatsapp);
+  }catch(error){console.error(error);renderWhatsAppAlert(null,error)}
 }
 function renderAutomationToggle(){
   const button=$("#automationToggle"),paused=Boolean(state.system?.whatsapp?.automationPaused);
@@ -184,7 +200,7 @@ async function openClient(id,workflow="canada"){
   $("#downloadPdf").href=`${currentClientBase()}/${encodeURIComponent(c.id)}/pdf`;
   $("#emailPdf").disabled=!c.answers["contact.email"]?.value;$("#emailPdf").title=c.answers["contact.email"]?.value?`Enviar a ${c.answers["contact.email"].value}`:"El cliente todavía no ha proporcionado su correo";
   const select=$("#detailStatus");select.replaceChildren(...Object.entries(STATUS).map(([value,label])=>{const option=el("option",null,label);option.value=value;option.selected=value===c.status;return option}));
-  $("#detailNotes").value=c.notes||"";renderInformation();renderDocuments();renderCustom();showTab("information");if(!$("#clientDialog").open)$("#clientDialog").showModal();
+  $("#detailNotes").value=c.notes||"";renderInformation();renderActivity();renderDocuments();renderCustom();showTab("information");if(!$("#clientDialog").open)$("#clientDialog").showModal();
 }
 function displaySection(field){return field.displaySection||field.section}
 function renderFieldRow(field,compact=false){
@@ -244,11 +260,63 @@ function renderDocuments(){
   const grid=el("div","documents-grid");for(const doc of state.current.documents){const card=el("article","document-card");card.append(el("div","document-icon",doc.mimeType==="application/pdf"?"PDF":"▧"),el("b",null,doc.name),el("span",null,`${(doc.size/1024/1024).toFixed(2)} MB · ${new Date(doc.createdAt).toLocaleDateString("es-MX")}`));const link=el("a",null,"Visualizar en Google Drive ↗");link.href=doc.webViewLink;link.target="_blank";link.rel="noopener";card.append(link);grid.append(card)}
   if(!state.current.documents.length)grid.append(el("p",null,"Todavía no hay documentos guardados."));root.append(grid);$("#documentBadge").textContent=state.current.documents.length;
 }
+function timelineFieldLabel(fieldId){return state.current?.fields?.find(field=>field.id===fieldId)?.label||fieldId||"dato del expediente"}
+function timelinePresentation(item){
+  const detail=item.detail||{},field=detail.fieldId?timelineFieldLabel(String(detail.fieldId)):null;
+  const known={
+    CLIENT_CREATED:["Expediente creado","Se creó el registro del cliente.","system"],
+    BOT_STARTED_FROM_CHAT:["Bot iniciado por administrador","El administrador inició el formulario desde WhatsApp.","admin"],
+    BOT_STARTED_OR_RESUMED_FROM_CHAT:["Bot reanudado por administrador","El administrador retomó el formulario desde WhatsApp.","admin"],
+    CASE_STOPPED_BY_ADMIN:["Bot detenido por administrador","El formulario quedó detenido para este cliente.","admin"],
+    CASE_RESUMED_BY_ADMIN:["Expediente reanudado","El administrador permitió continuar el formulario.","admin"],
+    CASE_RESUMED:["Conversación reanudada","El cliente volvió al punto pendiente del formulario.","progress"],
+    PREAUTHORIZED_INTAKE_STARTED:["Formulario habilitado","El expediente quedó autorizado para comenzar.","admin"],
+    CLIENT_INTAKE_CLOSED:["Formulario finalizado",detail.correctionReported?"El cliente terminó e indicó que había una corrección.":"El cliente terminó sin reportar correcciones.","progress"],
+    ANSWER_CONFIRMED:["Respuesta registrada",field?`Se guardó: ${field}.`:"Se guardó una respuesta.","incoming"],
+    ANSWER_SKIPPED:["Pregunta omitida",field?`El cliente omitió: ${field}.`:"El cliente omitió una pregunta.","incoming"],
+    STAFF_ANSWER_SET:["Dato actualizado por el equipo",field?`Se actualizó: ${field}.`:"Se actualizó un dato del expediente.","admin"],
+    CLIENT_UPDATED:["Expediente actualizado",`El administrador modificó: ${(detail.fields||[]).map(value=>({displayName:"nombre",notes:"notas",status:"estado"})[value]||value).join(", ")||"información general"}.`,"admin"],
+    DOCUMENT_QUEUED:["Documento recibido","El archivo quedó en espera de procesamiento.","document"],
+    DOCUMENT_UPLOADED:["Documento guardado","El archivo se guardó correctamente en Google Drive.","document"],
+    PASSPORT_RECEIVED:["Pasaporte procesado",`Se revisó el pasaporte y se detectaron ${Number(detail.proposals)||0} datos sugeridos.`,"document"],
+    DOCUMENT_REJECTED:["Documento rechazado",shortText(detail.reason)||"No fue posible aceptar el archivo.","error"],
+    DOCUMENT_PROCESSING_FAILED:["Error al procesar documento",shortText(detail.error)||"El archivo no pudo procesarse.","error"],
+    DRIVE_FOLDER_NAME_SYNCED:["Carpeta de Drive actualizada","La carpeta del cliente se sincronizó correctamente.","document"],
+    DRIVE_FOLDER_NAME_SYNC_FAILED:["Error de Google Drive",shortText(detail.error)||"No se pudo actualizar la carpeta.","error"],
+    CLIENT_PDF_DOWNLOADED:["PDF descargado","El administrador descargó el expediente.","admin"],
+    CLIENT_PDF_EMAILED:["PDF enviado por correo",detail.recipient?`Se envió a ${detail.recipient}.`:"El expediente se envió por correo.","admin"],
+    CUSTOM_FIELD_ADDED:["Dato adicional agregado","El administrador agregó información libre.","admin"],
+    CUSTOM_FIELD_DELETED:["Dato adicional eliminado","El administrador eliminó información libre.","admin"],
+    CLIENT_MESSAGE_RECEIVED:["Mensaje recibido",`${shortText(detail.preview)||"Mensaje sin texto."}${detail.ignoredBecausePaused?" · No se respondió porque el bot estaba pausado.":detail.ignoredBecauseClosed?" · No se respondió porque el expediente estaba cerrado.":""}`,detail.ignoredBecauseClosed||detail.ignoredBecausePaused?"muted":"incoming"],
+    BOT_MESSAGE_SENT:["Respuesta enviada",shortText(detail.preview)||"Respuesta automática sin texto.","outgoing"],
+    BOT_MESSAGE_SEND_FAILED:["No se pudo enviar la respuesta",shortText(detail.error)||"WhatsApp rechazó el envío.","error"],
+    CLIENT_MESSAGE_PROCESSING_FAILED:["Error al procesar mensaje",shortText(detail.error)||"No se pudo procesar el mensaje recibido.","error"],
+    MEXICO_PROFILE_DEFAULTS_APPLIED:["Datos predeterminados aplicados",`Se completaron ${Array.isArray(detail.fields)?detail.fields.length:0} valores del perfil México.`,"system"]
+  };
+  if(known[item.event])return known[item.event];
+  const fallback=item.event.toLowerCase().replace(/_/g," ").replace(/^./,letter=>letter.toUpperCase());
+  return [fallback,"Actividad registrada por el sistema.",isTimelineError(item)?"error":"system"];
+}
+function renderActivity(){
+  const events=Array.isArray(state.current.auditEvents)?state.current.auditEvents:[],root=$("#activityTimeline");root.replaceChildren();
+  const latestIncoming=events.find(item=>item.event==="CLIENT_MESSAGE_RECEIVED")||events.find(item=>["ANSWER_CONFIRMED","ANSWER_SKIPPED"].includes(item.event));
+  const latestOutgoing=events.find(item=>item.event==="BOT_MESSAGE_SENT");
+  $("#lastIncomingMessage").textContent=latestIncoming?.event==="CLIENT_MESSAGE_RECEIVED"?shortText(latestIncoming.detail?.preview,120):latestIncoming?`Respuesta registrada: ${timelineFieldLabel(latestIncoming.detail?.fieldId)}`:"Sin registro detallado";
+  $("#lastIncomingAt").textContent=latestIncoming?formatTimestamp(latestIncoming.createdAt):"Los mensajes se detallarán desde esta actualización";
+  $("#lastOutgoingMessage").textContent=latestOutgoing?shortText(latestOutgoing.detail?.preview,120):"Sin registro detallado";
+  $("#lastOutgoingAt").textContent=latestOutgoing?formatTimestamp(latestOutgoing.createdAt):"Las respuestas se detallarán desde esta actualización";
+  const errors=events.filter(isTimelineError);$("#timelineErrorCount").textContent=String(errors.length);$("#activityBadge").textContent=String(events.length);
+  for(const item of events){
+    const [title,description,kind]=timelinePresentation(item),entry=el("article",`timeline-entry ${kind}`),marker=el("i"),content=el("div"),heading=el("div","timeline-entry-heading");
+    heading.append(el("b",null,title),el("time",null,formatTimestamp(item.createdAt)));content.append(heading,el("p",null,description));entry.append(marker,content);root.append(entry);
+  }
+  if(!events.length)root.append(el("div","timeline-empty","Todavía no hay actividad registrada para este expediente."));
+}
 function renderCustom(){
   const root=$("#customFields");root.replaceChildren();for(const item of state.current.customFields){const row=el("div","custom-item");row.append(el("b",null,item.label),el("span",null,item.value));const remove=el("button",null,"Eliminar");remove.onclick=async()=>{await api(`${currentClientBase()}/${state.current.id}/custom-fields/${item.id}`,{method:"DELETE"});await refreshCurrent()};row.append(remove);root.append(row)}
 }
 async function refreshCurrent(){await openClient(state.current.id,state.currentWorkflow);await (state.currentWorkflow==="usa"?loadUsaClients():loadClients())}
-function showTab(tab){document.querySelectorAll(".tabs button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));for(const name of ["information","documents","extras"])$(`#${name}Tab`).hidden=name!==tab}
+function showTab(tab){document.querySelectorAll(".tabs button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));for(const name of ["information","activity","documents","extras"])$(`#${name}Tab`).hidden=name!==tab}
 
 for(const [value,label] of Object.entries(STATUS)){const option=el("option",null,label);option.value=value;$("#statusFilter").append(option)}
 document.querySelectorAll(".sort-button").forEach(button=>button.onclick=()=>{const key=button.dataset.sort;state.clientSort=state.clientSort.key===key?{key,direction:state.clientSort.direction==="asc"?"desc":"asc"}:{key,direction:"asc"};renderClients()});
@@ -259,6 +327,7 @@ $("#searchInput").oninput=renderClients;$("#statusFilter").onchange=renderClient
 $("#usaSearchInput").oninput=renderUsaClients;
 document.querySelectorAll(".tabs button").forEach(button=>button.onclick=()=>showTab(button.dataset.tab));
 $("#whatsappStatus").onclick=()=>{if(state.system?.whatsapp.state==="QR")$("#setupDialog").showModal();else toast(state.system?.whatsapp.lastError||`WhatsApp: ${state.system?.whatsapp.state}`)};
+$("#whatsappAlertAction").onclick=()=>{if(state.system?.whatsapp?.state==="QR")$("#setupDialog").showModal();else if(state.system?.whatsapp?.lastError)toast(state.system.whatsapp.lastError);else void loadSystem()};
 $("#backupButton").onclick=async()=>{try{const data=await api("/api/system/backup",{method:"POST"});toast(`Respaldo creado: ${data.filename}`)}catch(error){toast(error.message)}};
 $("#automationToggle").onclick=async()=>{const button=$("#automationToggle"),paused=!Boolean(state.system?.whatsapp?.automationPaused);button.disabled=true;try{const data=await api("/api/system/automation",{method:"POST",body:JSON.stringify({paused})});state.system.whatsapp=data.whatsapp;renderAutomationToggle();toast(paused?"Bot pausado: no enviará mensajes automáticos":"Bot reanudado")}catch(error){toast(error.message)}finally{button.disabled=false}};
 $("#detailName").onchange=async()=>{try{await api(`${currentClientBase()}/${state.current.id}/answers/identity.full_name`,{method:"PUT",body:JSON.stringify({value:$("#detailName").value})});toast("Nombre actualizado");await refreshCurrent()}catch(error){toast(error.message)}};

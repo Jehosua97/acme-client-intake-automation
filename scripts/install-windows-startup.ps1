@@ -8,6 +8,7 @@ $ErrorActionPreference = "Stop"
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $supervisorPath = Join-Path $PSScriptRoot "start-windows-supervisor.ps1"
+$hiddenLauncherPath = Join-Path $PSScriptRoot "start-windows-supervisor-hidden.vbs"
 $powershellPath = (Get-Command powershell.exe -ErrorAction Stop).Source
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
 $npmPath = (Get-Command npm.cmd -ErrorAction Stop).Source
@@ -18,6 +19,9 @@ $userId = $currentIdentity.Name
 
 if (-not (Test-Path -LiteralPath $supervisorPath -PathType Leaf)) {
   throw "Supervisor script not found: $supervisorPath"
+}
+if (-not (Test-Path -LiteralPath $hiddenLauncherPath -PathType Leaf)) {
+  throw "Hidden launcher not found: $hiddenLauncherPath"
 }
 
 $existingTask = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
@@ -42,8 +46,9 @@ Get-NetTCPConnection -LocalPort $healthPort -State Listen -ErrorAction SilentlyC
   }
 }
 
-$arguments = "-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$supervisorPath`" -NodePath `"$nodePath`" -NpmPath `"$npmPath`""
-$action = New-ScheduledTaskAction -Execute $powershellPath -Argument $arguments -WorkingDirectory $repositoryRoot
+$wscriptPath = Join-Path $env:SystemRoot "System32\wscript.exe"
+$arguments = "`"$hiddenLauncherPath`" `"$nodePath`" `"$npmPath`""
+$action = New-ScheduledTaskAction -Execute $wscriptPath -Argument $arguments -WorkingDirectory $repositoryRoot
 if ($isAdministrator) {
   $trigger = New-ScheduledTaskTrigger -AtStartup
   $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest

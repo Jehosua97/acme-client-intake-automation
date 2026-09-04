@@ -166,6 +166,14 @@ interface ChatIdentity {
 }
 type WorkflowKind = "CANADA" | "USA";
 
+function timelineMessagePreview(body: string | undefined, type: string): string {
+  const normalized = String(body ?? "").replace(/\s+/g, " ").trim();
+  if (normalized) return normalized.slice(0, 500);
+  if (type === "image") return "[Imagen]";
+  if (type === "document") return "[Documento]";
+  return `[Mensaje ${type || "sin texto"}]`;
+}
+
 export type AdminBotCommand = "START_CANADA" | "START_USA" | "START_ETA" | "STOP_ALL";
 
 /** Exact, case-insensitive allow-list. No partial matches or extra words activate the bot. */
@@ -358,7 +366,7 @@ export class WhatsAppLocalService {
     const otherWorkflow: WorkflowKind = workflow === "USA" ? "CANADA" : "USA";
     const otherCase = this.caseForIdentity(chatId, identity, otherWorkflow);
     if (otherCase && ["ACTIVE", "PAUSED", "WAITING_FOR_CLIENT"].includes(otherCase.status)) {
-      await this.client.sendMessage(chatId, `Primero detén el bot de ${otherWorkflow === "USA" ? "USA" : "Canadá"} para evitar que las respuestas se asignen al expediente equivocado.`);
+      await this.sendTrackedText(chatId, `Primero detén el bot de ${otherWorkflow === "USA" ? "USA" : "Canadá"} para evitar que las respuestas se asignen al expediente equivocado.`, this.storeFor(otherWorkflow), otherCase.id);
       return;
     }
     const existing = this.caseForIdentity(chatId, identity, workflow);
@@ -376,7 +384,7 @@ export class WhatsAppLocalService {
         store.saveCase(result.caseRecord);
         store.audit(existing.id, "BOT_STARTED_OR_RESUMED_FROM_CHAT", { chatId, initiatedBy, workflow });
         for (const event of result.auditEvents) store.audit(existing.id, event.event, event.detail);
-        await this.sendAll(chatId, result.outgoing);
+        await this.sendAll(chatId, result.outgoing, store, existing.id);
         return;
       }
       if (existing.status === "STOPPED_BY_ADMIN") {
@@ -384,7 +392,7 @@ export class WhatsAppLocalService {
         return;
       }
       store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status, initiatedBy });
-      await this.client.sendMessage(chatId, "Tu expediente ya está iniciado y conserva todo el avance. El cliente puede responder la pregunta pendiente o pedir un resumen.");
+      await this.sendTrackedText(chatId, "Tu expediente ya está iniciado y conserva todo el avance. El cliente puede responder la pregunta pendiente o pedir un resumen.", store, existing.id);
       return;
     }
 
@@ -397,13 +405,14 @@ export class WhatsAppLocalService {
     store.saveCase(result.caseRecord);
     store.audit(caseRecord.id, "BOT_STARTED_FROM_CHAT", { chatId, initiatedBy, workflow });
     for (const event of result.auditEvents) store.audit(caseRecord.id, event.event, event.detail);
-    await this.sendAll(chatId, result.outgoing);
+    await this.sendAll(chatId, result.outgoing, store, caseRecord.id);
   }
 
   private async handleClientMessage(message: Message): Promise<void> {
+    let timelineStore: SQLiteStore | null = null;
+    let timelineClientId: string | null = null;
     try {
       if (message.isStatus || message.broadcast) return;
-      if (this.runtime.automationPaused) return;
       const messageId = normalizeWhatsAppMessageId(message.id);
       if (!messageId) {
         const rawId = message.id as unknown;
@@ -436,7 +445,27 @@ export class WhatsAppLocalService {
       const workflow: WorkflowKind | null = open(usaCase) ? "USA" : open(canadaCase) ? "CANADA" : null;
       const caseRecord = workflow === "USA" ? usaCase : workflow === "CANADA" ? canadaCase : null;
       const activeStore = workflow ? this.storeFor(workflow) : null;
-      if (!caseRecord) { this.store.markProcessed(messageId); return; }
+      const matchingClosedCase = caseRecord ?? usaCase ?? canadaCase;
+      const matchingStore = caseRecord && activeStore ? activeStore : usaCase ? this.usaStore : canadaCase ? this.store : null;
+      if (matchingClosedCase && matchingStore) {
+        timelineStore = matchingStore;
+        timelineClientId = matchingClosedCase.id;
+        matchingStore.audit(matchingClosedCase.id, "CLIENT_MESSAGE_RECEIVED", {
+          messageId,
+          messageType: String(message.type ?? "unknown"),
+          preview: timelineMessagePreview(message.body, String(message.type ?? "unknown")),
+          ignoredBecauseClosed: !caseRecord,
+          ignoredBecausePaused: this.runtime.automationPaused,
+        });
+      }
+      if (this.runtime.automationPaused) {
+        (matchingStore ?? this.store).markProcessed(messageId);
+        return;
+      }
+      if (!caseRecord) {
+        (matchingStore ?? this.store).markProcessed(messageId);
+        return;
+      }
       if (caseRecord.status === "STOPPED_BY_ADMIN") {
         this.store.markProcessed(messageId);
         return;
@@ -452,19 +481,19 @@ export class WhatsAppLocalService {
           const result = workflow === "USA" ? handleUsaText(caseRecord, message.body || "") : handleClientText(caseRecord, message.body || "");
           activeStore!.saveCase(result.caseRecord);
           activeStore!.markProcessed(messageId);
-          await this.sendAll(sourceChatId, result.outgoing);
+          await this.sendAll(sourceChatId, result.outgoing, activeStore!, caseRecord.id);
           return;
         }
         activeStore!.queueDocument(caseRecord.id, messageId);
         activeStore!.markProcessed(messageId);
-        await this.client.sendMessage(sourceChatId, "Recibí tu archivo. Lo estoy guardando en tu carpeta; te aviso en cuanto termine.");
+        await this.sendTrackedText(sourceChatId, "Recibí tu archivo. Lo estoy guardando en tu carpeta; te aviso en cuanto termine.", activeStore!, caseRecord.id);
         void this.processPendingDocument();
         return;
       }
 
       if (message.hasMedia) {
         activeStore!.markProcessed(messageId);
-        await this.client.sendMessage(sourceChatId, "Por ahora solo puedo guardar fotos y archivos PDF. Envíame el pasaporte en uno de esos formatos.");
+        await this.sendTrackedText(sourceChatId, "Por ahora solo puedo guardar fotos y archivos PDF. Envíame el pasaporte en uno de esos formatos.", activeStore!, caseRecord.id);
         return;
       }
 
@@ -479,8 +508,12 @@ export class WhatsAppLocalService {
           activeStore!.audit(caseRecord.id, "DRIVE_FOLDER_NAME_SYNC_FAILED", { error: error instanceof Error ? error.message : String(error) });
         });
       }
-      await this.sendAll(sourceChatId, result.outgoing);
-    } catch (error) { this.setError(error, false); }
+      await this.sendAll(sourceChatId, result.outgoing, activeStore!, caseRecord.id);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      if (timelineStore && timelineClientId) timelineStore.audit(timelineClientId, "CLIENT_MESSAGE_PROCESSING_FAILED", { error: detail });
+      this.setError(error, false);
+    }
   }
 
   private async processPendingDocument(): Promise<void> {
@@ -514,13 +547,13 @@ export class WhatsAppLocalService {
       if (!media) throw new Error("No fue posible descargar el archivo de WhatsApp");
       if (!ALLOWED_MIME.has(media.mimetype)) {
         activeStore.rejectDocument(job.id, `Formato no permitido: ${media.mimetype}`);
-        await this.client.sendMessage(message.from, "No pude guardar ese formato. Envíame una foto JPG/PNG/WEBP o un PDF.");
+        await this.sendTrackedText(message.from, "No pude guardar ese formato. Envíame una foto JPG/PNG/WEBP o un PDF.", activeStore, job.clientId);
         return;
       }
       const bytes = Buffer.from(media.data, "base64");
       if (bytes.length > this.config.MAX_DOCUMENT_MB * 1024 * 1024) {
         activeStore.rejectDocument(job.id, "Archivo demasiado grande");
-        await this.client.sendMessage(message.from, `El archivo supera ${this.config.MAX_DOCUMENT_MB} MB. Envíame una versión más pequeña.`);
+        await this.sendTrackedText(message.from, `El archivo supera ${this.config.MAX_DOCUMENT_MB} MB. Envíame una versión más pequeña.`, activeStore, job.clientId);
         return;
       }
       const uploaded = await this.driveFor(workflow).uploadClientDocument(job.clientId, bytes, media.mimetype, media.filename ?? null);
@@ -530,19 +563,34 @@ export class WhatsAppLocalService {
       const result = workflow === "USA" ? handleUsaDocument(caseRecord, uploaded.driveFileId) : handlePassportDocument(caseRecord, uploaded.driveFileId, []);
       activeStore.saveCase(result.caseRecord);
       for (const event of result.auditEvents) activeStore.audit(caseRecord.id, event.event, event.detail);
-      await this.client.sendMessage(message.from, "✅ Tu archivo quedó guardado correctamente en la carpeta de este expediente.");
-      await this.sendAll(message.from, result.outgoing);
+      await this.sendTrackedText(message.from, "✅ Tu archivo quedó guardado correctamente en la carpeta de este expediente.", activeStore, caseRecord.id);
+      await this.sendAll(message.from, result.outgoing, activeStore, caseRecord.id);
     } catch (error) {
-      if (job) activeStore.failDocument(job.id, error instanceof Error ? error.message : "Error desconocido");
+      if (job) {
+        const detail = error instanceof Error ? error.message : "Error desconocido";
+        activeStore.failDocument(job.id, detail);
+        activeStore.audit(job.clientId, "DOCUMENT_PROCESSING_FAILED", { error: detail, jobId: job.id });
+      }
       this.setError(error, false);
     } finally {
       this.workerBusy = false;
     }
   }
 
-  private async sendAll(chatId: string, outgoing: OutgoingMessage[]): Promise<void> {
+  private async sendAll(chatId: string, outgoing: OutgoingMessage[], store: SQLiteStore, clientId: string): Promise<void> {
     for (const message of outgoing) {
-      if (message.type === "text") await this.client.sendMessage(chatId, message.body);
+      if (message.type === "text") await this.sendTrackedText(chatId, message.body, store, clientId);
+    }
+  }
+
+  private async sendTrackedText(chatId: string, body: string, store: SQLiteStore, clientId: string): Promise<void> {
+    const preview = timelineMessagePreview(body, "text");
+    try {
+      const sent = await this.client.sendMessage(chatId, body);
+      store.audit(clientId, "BOT_MESSAGE_SENT", { messageId: normalizeWhatsAppMessageId(sent?.id), preview });
+    } catch (error) {
+      store.audit(clientId, "BOT_MESSAGE_SEND_FAILED", { preview, error: error instanceof Error ? error.message : String(error) });
+      throw error;
     }
   }
 

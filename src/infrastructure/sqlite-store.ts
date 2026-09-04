@@ -65,6 +65,13 @@ export interface PendingDocument {
   availableAt: string;
 }
 
+export interface StoredAuditEvent {
+  id: number;
+  event: string;
+  detail: Record<string, unknown>;
+  createdAt: string;
+}
+
 type Row = Record<string, unknown>;
 const iso = () => new Date().toISOString();
 
@@ -290,6 +297,22 @@ export class SQLiteStore {
     this.db.prepare("INSERT INTO audit_events(client_id,event,detail_json,created_at) VALUES(?,?,?,?)").run(clientId, event, JSON.stringify(detail), iso());
   }
 
+  listAuditEvents(clientId: string, limit = 150): StoredAuditEvent[] {
+    const safeLimit = Math.min(Math.max(Math.trunc(limit), 1), 300);
+    const rows = this.db.prepare(`SELECT id,event,detail_json,created_at
+      FROM audit_events WHERE client_id=? ORDER BY id DESC LIMIT ?`).all(clientId, safeLimit) as Row[];
+    return rows.map((row) => {
+      let detail: Record<string, unknown> = {};
+      try {
+        const parsed = JSON.parse(String(row.detail_json));
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) detail = parsed as Record<string, unknown>;
+      } catch {
+        detail = { raw: String(row.detail_json) };
+      }
+      return { id: Number(row.id), event: String(row.event), detail, createdAt: String(row.created_at) };
+    });
+  }
+
   listClients(): ClientSummary[] {
     const rows = this.db.prepare(`SELECT c.*,COUNT(DISTINCT d.id) document_count,
       COUNT(DISTINCT CASE WHEN p.status IN ('PENDING','PROCESSING') THEN p.id END) pending_count
@@ -327,6 +350,7 @@ export class SQLiteStore {
       progress: this.workflow.calculateProgress(caseRecord),
       documents: this.listDocuments(id),
       customFields: this.listCustomFields(id),
+      auditEvents: this.listAuditEvents(id),
     };
   }
 

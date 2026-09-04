@@ -42,6 +42,10 @@ describe("SQLiteStore", () => {
       const details = store.getClientDetails(caseRecord.id);
       assert.equal((details?.documents as unknown[]).length, 1);
       assert.equal((details?.customFields as unknown[]).length, 1);
+      const auditEvents = details?.auditEvents as Array<{ event: string; detail: Record<string, unknown> }>;
+      assert.ok(auditEvents.some((event) => event.event === "DOCUMENT_UPLOADED"));
+      assert.ok(auditEvents.some((event) => event.event === "CUSTOM_FIELD_ADDED"));
+      assert.equal(auditEvents[0]?.event, "DOCUMENT_UPLOADED");
       assert.equal(store.listClients()[0]?.documentCount, 1);
       assert.equal(store.listClients()[0]?.pendingDocumentCount, 0);
     } finally {

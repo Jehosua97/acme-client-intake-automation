@@ -30,6 +30,7 @@ describe("conversation engine", () => {
     assert.equal(started.caseRecord.consentVersion, null);
     assert.equal(started.caseRecord.consentedAt, null);
     const overview = started.outgoing[0]?.type === "text" ? started.outgoing[0].body : "";
+    assert.equal(started.outgoing.length, 1);
     assert.match(overview, /30 y 45 minutos/);
     assert.match(overview, /5 bloques/);
     assert.doesNotMatch(overview, /familiar falleció/i);
@@ -37,6 +38,8 @@ describe("conversation engine", () => {
     assert.match(overview, /varios días/);
     assert.match(overview, /cerrar WhatsApp y regresar cuando quieras/i);
     assert.match(overview, /cubrir los 10 años sin dejar meses vacíos/i);
+    assert.match(overview, /Comencemos con tu pasaporte/i);
+    assert.match(overview, /foto clara o un PDF/i);
     assert.doesNotMatch(overview, /ALTO|PAUSA|DETENTE|PARA|CONTINUAR/i);
     assert.doesNotMatch(overview, /de antemano cuántos periodos/i);
   });
@@ -333,7 +336,9 @@ describe("conversation engine", () => {
     assert.ok(fields.findIndex((field) => field.id === "employment.1.activity") < fields.findIndex((field) => field.id === "employment.1.organization"));
     assert.ok(fields.findIndex((field) => field.id === "employment.1.organization") < fields.findIndex((field) => field.id === "employment.1.from"));
     const intro = fields.find((field) => field.id === "employment.1.activity")?.prompt ?? "";
-    assert.match(intro, /agosto de 2016/);
+    const today = new Date();
+    const cutoffLabel = `${["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"][today.getMonth()]} de ${today.getFullYear() - 10}`;
+    assert.ok(intro.includes(cutoffLabel));
     assert.match(intro, /trabajo o actividad actual/i);
     assert.doesNotMatch(intro, /ejemplo|2 periodos|08\/2016 a 01\/2023/i);
 

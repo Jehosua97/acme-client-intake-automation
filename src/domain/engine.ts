@@ -270,9 +270,11 @@ export function startIntake(caseRecord: CaseRecord): EngineResult {
   caseRecord.consentedAt = null;
   const defaultedFields = applyMexicoProfileDefaults(caseRecord);
   caseRecord.updatedAt = now();
+  const firstStep = advance(caseRecord);
+  const firstPrompt = firstStep.length === 1 && firstStep[0]?.type === "text" ? firstStep[0].body : null;
   return {
     caseRecord,
-    outgoing: [text(INTAKE_OVERVIEW), ...advance(caseRecord)],
+    outgoing: firstPrompt ? [text(`${INTAKE_OVERVIEW}\n\n──────────\n\n${firstPrompt}`)] : [text(INTAKE_OVERVIEW), ...firstStep],
     auditEvents: [
       { event: "PREAUTHORIZED_INTAKE_STARTED", detail: {} },
       { event: "MEXICO_PROFILE_DEFAULTS_APPLIED", detail: { fields: defaultedFields } },

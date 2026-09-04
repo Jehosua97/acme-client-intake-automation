@@ -16,6 +16,7 @@ $supervisorLog = Join-Path $logDirectory "supervisor.log"
 $mutex = [System.Threading.Mutex]::new($false, "Local\ACMEClientIntakeBotSupervisor")
 $ownsMutex = $false
 $healthPort = 3188
+$whatsAppSessionRoot = [System.IO.Path]::GetFullPath((Join-Path $dataDirectory "whatsapp-session"))
 
 $environmentPath = Join-Path $repositoryRoot ".env"
 if (Test-Path -LiteralPath $environmentPath) {
@@ -32,6 +33,56 @@ function Write-SupervisorLog {
   param([string]$Message)
   $line = "{0} {1}" -f (Get-Date).ToUniversalTime().ToString("o"), $Message
   Add-Content -LiteralPath $supervisorLog -Value $line -Encoding UTF8
+}
+
+function Get-DescendantProcessIds {
+  param([int]$RootProcessId)
+  $processes = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Select-Object ProcessId, ParentProcessId)
+  $pending = [System.Collections.Generic.Queue[int]]::new()
+  $descendants = [System.Collections.Generic.List[int]]::new()
+  $pending.Enqueue($RootProcessId)
+  while ($pending.Count -gt 0) {
+    $parentId = $pending.Dequeue()
+    foreach ($process in $processes) {
+      if ([int]$process.ParentProcessId -eq $parentId -and -not $descendants.Contains([int]$process.ProcessId)) {
+        $childId = [int]$process.ProcessId
+        $descendants.Add($childId)
+        $pending.Enqueue($childId)
+      }
+    }
+  }
+  return @($descendants)
+}
+
+function Stop-BotProcessTree {
+  param([int]$RootProcessId)
+  $descendants = @(Get-DescendantProcessIds -RootProcessId $RootProcessId)
+  [array]::Reverse($descendants)
+  foreach ($processId in $descendants) {
+    Stop-Process -Id $processId -Force -ErrorAction SilentlyContinue
+  }
+  Stop-Process -Id $RootProcessId -Force -ErrorAction SilentlyContinue
+  Write-SupervisorLog "Stopped Node PID $RootProcessId and $($descendants.Count) descendant process(es)."
+}
+
+function Stop-StaleWhatsAppBrowsers {
+  param([string]$SessionRoot)
+  $resolvedRepository = [System.IO.Path]::GetFullPath($repositoryRoot).TrimEnd('\') + '\'
+  $resolvedSession = [System.IO.Path]::GetFullPath($SessionRoot)
+  if (-not $resolvedSession.StartsWith($resolvedRepository, [System.StringComparison]::OrdinalIgnoreCase)) {
+    throw "Refusing to inspect browser processes outside the repository: $resolvedSession"
+  }
+  $matches = @(Get-CimInstance Win32_Process -ErrorAction SilentlyContinue | Where-Object {
+    $_.Name -in @("chrome.exe", "msedge.exe") `
+      -and $_.CommandLine `
+      -and $_.CommandLine.IndexOf($resolvedSession, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
+  })
+  if ($matches.Count -eq 0) { return }
+  foreach ($process in ($matches | Sort-Object ProcessId -Descending)) {
+    Stop-Process -Id ([int]$process.ProcessId) -Force -ErrorAction SilentlyContinue
+  }
+  Write-SupervisorLog "Removed $($matches.Count) stale WhatsApp browser process(es) for the local session."
+  Start-Sleep -Seconds 2
 }
 
 try {
@@ -52,14 +103,25 @@ try {
   if (-not (Test-Path -LiteralPath $NodePath -PathType Leaf)) { throw "Node executable not found: $NodePath" }
   if (-not (Test-Path -LiteralPath $NpmPath -PathType Leaf)) { throw "npm executable not found: $NpmPath" }
   $buildLog = Join-Path $logDirectory "build.log"
+  $buildErrorLog = Join-Path $logDirectory "build-error.log"
 
   Write-SupervisorLog "Building the production application before startup."
-  & $NpmPath run build *>> $buildLog
-  if ($LASTEXITCODE -ne 0) {
-    throw "Production build failed with exit code $LASTEXITCODE. See $buildLog"
+  $buildProcess = Start-Process `
+    -FilePath $NpmPath `
+    -ArgumentList @("run", "build") `
+    -WorkingDirectory $repositoryRoot `
+    -RedirectStandardOutput $buildLog `
+    -RedirectStandardError $buildErrorLog `
+    -WindowStyle Hidden `
+    -Wait `
+    -PassThru
+  if ($buildProcess.ExitCode -ne 0) {
+    throw "Production build failed with exit code $($buildProcess.ExitCode). See $buildLog and $buildErrorLog"
   }
 
+  $restartAttempts = 0
   while ($true) {
+    Stop-StaleWhatsAppBrowsers -SessionRoot $whatsAppSessionRoot
     $startedAt = Get-Date
     $runSuffix = $startedAt.ToString("yyyy-MM-dd-HHmmss")
     $stdoutLog = Join-Path $logDirectory "bot-$runSuffix.log"
@@ -92,6 +154,7 @@ try {
           Write-SupervisorLog "Health check reported WhatsApp state $whatsAppState ($consecutiveFailures/3)."
         } else {
           $consecutiveFailures = 0
+          if ($whatsAppState -eq "READY") { $restartAttempts = 0 }
         }
       } catch {
         $consecutiveFailures++
@@ -100,7 +163,8 @@ try {
 
       if ($consecutiveFailures -ge 3 -and -not $botProcess.HasExited) {
         Write-SupervisorLog "The application is unhealthy; terminating PID $($botProcess.Id) so it can recover."
-        Stop-Process -Id $botProcess.Id -Force -ErrorAction SilentlyContinue
+        Stop-BotProcessTree -RootProcessId $botProcess.Id
+        Stop-StaleWhatsAppBrowsers -SessionRoot $whatsAppSessionRoot
         break
       }
     }
@@ -112,8 +176,10 @@ try {
     } catch {
       "unknown"
     }
-    Write-SupervisorLog "Node process exited with code $exitCode. Restarting in $RestartDelaySeconds seconds."
-    Start-Sleep -Seconds $RestartDelaySeconds
+    $restartAttempts++
+    $nextDelay = [Math]::Min([Math]::Max($RestartDelaySeconds, $RestartDelaySeconds * [Math]::Pow(2, [Math]::Min($restartAttempts - 1, 5))), 300)
+    Write-SupervisorLog "Node process exited with code $exitCode. Restart attempt $restartAttempts in $nextDelay seconds."
+    Start-Sleep -Seconds $nextDelay
   }
 } catch {
   Write-SupervisorLog "Supervisor stopped because of an error: $($_.Exception.Message)"
