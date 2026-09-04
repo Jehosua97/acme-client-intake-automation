@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isAuthorizedBackupPhone, isAuthorizedCommandPhone, normalizeWhatsAppMessageId, parseAdminBotCommand, parseAuthorizedSelfServiceCommand, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
+import { isAuthorizedBackupPhone, isAuthorizedCommandPhone, looksLikeUsableAddress, normalizeWhatsAppMessageId, parseAdminBotCommand, parseAuthorizedSelfServiceCommand, refersToPreviousAnswer, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
 
 describe("WhatsApp message ID normalization", () => {
   it("accepts the serialized ID provided by normal WhatsApp messages", () => {
@@ -60,5 +60,18 @@ describe("WhatsApp admin activation commands", () => {
     assert.equal(parseAuthorizedSelfServiceCommand("STOP BOT", "+14378781645", "+14378781645"), "STOP_ALL");
     assert.equal(parseAuthorizedSelfServiceCommand("START BOT CANADA", "+14165550123", "+14378781645"), null);
     assert.equal(parseAuthorizedSelfServiceCommand("STOP BOT", "+14165550123", "+14378781645"), null);
+  });
+});
+
+describe("AI answer safeguards", () => {
+  it("accepts a recognizable address without requiring every suggested component", () => {
+    assert.equal(looksLikeUsableAddress("Carr. del Bosque 12, Villa Norte"), true);
+    assert.equal(looksLikeUsableAddress("No recuerdo"), false);
+  });
+
+  it("recognizes requests to reuse the immediately previous answer", () => {
+    assert.equal(refersToPreviousAnswer("Ya te lo di"), true);
+    assert.equal(refersToPreviousAnswer("I already sent it"), true);
+    assert.equal(refersToPreviousAnswer("Esta es otra dirección"), false);
   });
 });

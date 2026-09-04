@@ -182,6 +182,16 @@ function normalizedCommand(value: string): string {
   return value.trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+export function refersToPreviousAnswer(value: string): boolean {
+  return /^(?:ya\s+(?:te\s+)?(?:lo|la)\s+(?:di|mande|envie)|ya\s+respondi|te\s+lo\s+acabo\s+de\s+dar|i\s+already\s+(?:gave|sent)\s+it)$/.test(normalizedCommand(value));
+}
+
+export function looksLikeUsableAddress(value: string): boolean {
+  const clean = value.trim();
+  return clean.length >= 8 && /\p{L}/u.test(clean) && /\d/.test(clean)
+    && (clean.includes(",") || /\b(?:calle|carr(?:etera)?|av(?:enida)?|blvd|boulevard|road|rd|street|st|drive|dr|court|ct|trail|trl)\b/i.test(clean));
+}
+
 function timelineMessagePreview(body: string | undefined, type: string): string {
   const normalized = String(body ?? "").replace(/\s+/g, " ").trim();
   if (normalized) return normalized.slice(0, 500);
@@ -542,7 +552,7 @@ export class WhatsAppLocalService {
       }
 
       const previousFullName = caseRecord.answers["identity.full_name"]?.value;
-      const result = await this.handleConversationText(workflow!, caseRecord, message.body);
+      const result = await this.handleConversationText(workflow!, caseRecord, message.body, messageId);
       activeStore!.saveCase(result.caseRecord);
       for (const event of result.auditEvents) activeStore!.audit(caseRecord.id, event.event, event.detail);
       activeStore!.markProcessed(messageId);
@@ -560,7 +570,23 @@ export class WhatsAppLocalService {
     }
   }
 
-  private async handleConversationText(workflow: WorkflowKind, caseRecord: CaseRecord, raw: string): Promise<ReturnType<typeof handleClientText>> {
+  private previousAnswerAfterAiClarification(workflow: WorkflowKind, clientId: string, currentMessageId: string, fieldId: string): string | null {
+    const details = this.storeFor(workflow).getClientDetails(clientId);
+    const events = Array.isArray(details?.auditEvents) ? details.auditEvents as Array<{ event?: unknown; detail?: unknown }> : [];
+    const currentIndex = events.findIndex((item) => item.event === "CLIENT_MESSAGE_RECEIVED"
+      && (item.detail as Record<string, unknown> | undefined)?.messageId === currentMessageId);
+    if (currentIndex < 0) return null;
+    const clarificationIndex = events.findIndex((item, index) => index > currentIndex
+      && item.event === "AI_INTERPRETATION_COMPLETED"
+      && (item.detail as Record<string, unknown> | undefined)?.fieldId === fieldId
+      && (item.detail as Record<string, unknown> | undefined)?.action === "CLARIFY");
+    if (clarificationIndex < 0) return null;
+    const previous = events.find((item, index) => index > clarificationIndex && item.event === "CLIENT_MESSAGE_RECEIVED");
+    const preview = (previous?.detail as Record<string, unknown> | undefined)?.preview;
+    return typeof preview === "string" && preview.trim() && !refersToPreviousAnswer(preview) ? preview.trim() : null;
+  }
+
+  private async handleConversationText(workflow: WorkflowKind, caseRecord: CaseRecord, raw: string, messageId: string): Promise<ReturnType<typeof handleClientText>> {
     const deterministic = (value: string) => workflow === "USA" ? handleUsaText(caseRecord, value) : handleClientText(caseRecord, value);
     const aiStatus = this.aiConversation.status();
     if (!aiStatus.active || !raw.trim() || !["ACTIVE", "PAUSED"].includes(caseRecord.status)) return deterministic(raw);
@@ -573,20 +599,34 @@ export class WhatsAppLocalService {
       : fieldById(caseRecord.currentFieldId, caseRecord.answers);
     if (!field || field.id === "workflow.passport_uploaded" || field.id.endsWith(".document")) return deterministic(raw);
 
+    const recoveredAnswer = refersToPreviousAnswer(raw)
+      ? this.previousAnswerAfterAiClarification(workflow, caseRecord.id, messageId, field.id)
+      : null;
+    const effectiveRaw = recoveredAnswer ?? raw;
+
     try {
-      const interpretation = await this.aiConversation.interpret(workflow, field, raw);
+      const interpretation = await this.aiConversation.interpret(workflow, field, effectiveRaw);
+      const addressSafeguard = /(?:^|\.)(?:residential_address|mailing_address|address)$/.test(field.id)
+        && looksLikeUsableAddress(effectiveRaw);
       const aiAudit = {
         event: "AI_INTERPRETATION_COMPLETED",
-        detail: { workflow, fieldId: field.id, action: interpretation.action, confidence: interpretation.confidence, model: aiStatus.model },
+        detail: {
+          workflow,
+          fieldId: field.id,
+          action: addressSafeguard && interpretation.action === "CLARIFY" ? "ANSWER_ADDRESS_SAFEGUARD" : interpretation.action,
+          confidence: interpretation.confidence,
+          model: aiStatus.model,
+          recoveredPreviousAnswer: Boolean(recoveredAnswer),
+        },
       };
-      if (interpretation.action !== "ANSWER" || interpretation.confidence < 75 || !interpretation.normalizedAnswer.trim()) {
+      if (!addressSafeguard && (interpretation.action !== "ANSWER" || interpretation.confidence < 75 || !interpretation.normalizedAnswer.trim())) {
         return {
           caseRecord,
           outgoing: [{ type: "text", body: `Quiero asegurarme de registrar correctamente *${field.label.toLocaleLowerCase("es")}*.\n\n${field.prompt}` }],
           auditEvents: [aiAudit],
         };
       }
-      const result = deterministic(interpretation.normalizedAnswer);
+      const result = deterministic(addressSafeguard ? effectiveRaw : interpretation.normalizedAnswer);
       const accepted = result.auditEvents.some((event) => /ANSWER_(?:CONFIRMED|RECORDED)/.test(event.event));
       if (accepted && result.caseRecord.status === "ACTIVE" && result.outgoing[0]?.type === "text") {
         result.outgoing[0] = { type: "text", body: `Perfecto, gracias.\n\n${result.outgoing[0].body}` };
