@@ -288,7 +288,6 @@ export class WhatsAppLocalService {
     this.client.on("ready", () => {
       this.backupInProgress = false;
       this.runtime = { ...this.runtime, state: "READY", qrDataUrl: null, account: this.client.info?.wid?._serialized ?? null, lastError: null };
-      void this.recoverRecentStartCommands();
     });
     this.client.on("auth_failure", (message) => { this.runtime = { ...this.runtime, state: "ERROR", lastError: message }; });
     this.client.on("disconnected", (reason) => {
@@ -779,32 +778,6 @@ export class WhatsAppLocalService {
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
     if (this.runtime.state !== "READY") throw new Error("WhatsApp no quedó listo después de 2 minutos");
-  }
-
-  private async recoverRecentStartCommands(): Promise<void> {
-    try {
-      const cutoff = Math.floor(Date.now() / 1_000) - 30 * 60;
-      // getChats()/message.getChat() currently throws for some WhatsApp LID
-      // records. Searching only the activation phrase avoids serializing every
-      // chat and lets a recent command survive an application restart.
-      for (const command of [BOT_START_CANADA_COMMAND, BOT_START_USA_COMMAND, BOT_START_ETA_COMMAND, BOT_STOP_COMMAND]) {
-        const messages = await this.client.searchMessages(command, { limit: 25 });
-        for (const message of messages) {
-          if (!message.fromMe || message.isStatus || message.timestamp < cutoff) continue;
-          if (message.body.trim().toLocaleUpperCase("es") !== command) continue;
-          const messageId = normalizeWhatsAppMessageId(message.id);
-          if (messageId && (this.store.isProcessed(messageId) || this.usaStore.isProcessed(messageId))) continue;
-          this.store.audit(null, "RECENT_START_COMMAND_RECOVERED", { messageId, command });
-          await this.handleOwnerMessage(message);
-        }
-      }
-    } catch (error) {
-      // Recovery is best-effort. Live message_create events remain active and
-      // a failed historical search must not make a healthy session look down.
-      this.store.audit(null, "START_COMMAND_RECOVERY_FAILED", {
-        error: error instanceof Error ? error.message : String(error),
-      });
-    }
   }
 
   private async resolveChatIdentity(primaryChatId: string, candidates: Array<string | null> = []): Promise<ChatIdentity> {
