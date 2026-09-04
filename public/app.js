@@ -117,6 +117,10 @@ async function loadSystem(){
     const wa=$("#whatsappStatus"),drive=$("#driveStatus");
     wa.className="connection "+(state.system.whatsapp.state==="READY"?"ready":["QR","BACKUP"].includes(state.system.whatsapp.state)?"warn":"");
     wa.querySelector("b").textContent={READY:"Conectado",QR:"Escanear QR",AUTHENTICATED:"Autenticando",STARTING:"Iniciando",BACKUP:"Respaldando",DISCONNECTED:"Desconectado",ERROR:"Error"}[state.system.whatsapp.state]||state.system.whatsapp.state;
+    const ai=$("#aiStatus"),aiState=state.system.aiConversation||{};
+    ai.className="connection "+(aiState.active&&!aiState.lastError?"ready":aiState.enabled?"warn":"");
+    ai.querySelector("b").textContent=aiState.active?(aiState.lastError?"Con error":"Activo"):aiState.enabled?"Falta clave":"Desactivado";
+    ai.title=aiState.lastError||`Modelo: ${aiState.model||"sin configurar"}. La validación del formulario permanece activa.`;
     const ds=state.system.googleDrive;
     drive.className="connection "+(ds.connected?"ready":"warn");
     drive.querySelector("b").textContent=ds.connected?"Conectado":ds.configured?"Conectar":"Configurar";
@@ -291,6 +295,8 @@ function timelinePresentation(item){
     BOT_MESSAGE_SENT:["Respuesta enviada",shortText(detail.preview)||"Respuesta automática sin texto.","outgoing"],
     BOT_MESSAGE_SEND_FAILED:["No se pudo enviar la respuesta",shortText(detail.error)||"WhatsApp rechazó el envío.","error"],
     CLIENT_MESSAGE_PROCESSING_FAILED:["Error al procesar mensaje",shortText(detail.error)||"No se pudo procesar el mensaje recibido.","error"],
+    AI_INTERPRETATION_COMPLETED:["Respuesta interpretada con IA",`${field?`Campo: ${field}. `:""}Confianza: ${detail.confidence??"—"}%. La validación normal decidió qué guardar.`,"system"],
+    AI_INTERPRETATION_FAILED:["La IA no pudo interpretar el mensaje",`${shortText(detail.error)||"OpenAI no respondió correctamente."} · Se utilizó el flujo normal como respaldo.`,"error"],
     MEXICO_PROFILE_DEFAULTS_APPLIED:["Datos predeterminados aplicados",`Se completaron ${Array.isArray(detail.fields)?detail.fields.length:0} valores del perfil México.`,"system"]
   };
   if(known[item.event])return known[item.event];

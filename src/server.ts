@@ -13,6 +13,7 @@ import { SQLiteStore, type StoreWorkflow, type StoredDocument } from "./infrastr
 import { GoogleDriveService } from "./infrastructure/google-drive.js";
 import { WhatsAppLocalService } from "./infrastructure/whatsapp-local.js";
 import { FullBackupService } from "./infrastructure/full-backup.js";
+import { OpenAIConversationService } from "./infrastructure/openai-conversation.js";
 import { calculateUsaProgress, newUsaCase } from "./domain/usa-engine.js";
 import { usaCatalogFor, usaFieldById } from "./domain/usa-catalog.js";
 import { usaCrossFieldIssues, usaImmediateConsistencyIssue } from "./domain/usa-consistency.js";
@@ -40,7 +41,8 @@ const usaConfig = { ...config, GOOGLE_DRIVE_ROOT_FOLDER_NAME: config.GOOGLE_DRIV
 const usaDrive = new GoogleDriveService(usaConfig, usaStore);
 await usaDrive.initialize();
 const fullBackup = new FullBackupService(path.resolve("."), config.fullBackupOutputDir, [store, usaStore]);
-const whatsapp = new WhatsAppLocalService(config, store, drive, fullBackup, usaStore, usaDrive);
+const aiConversation = new OpenAIConversationService(config);
+const whatsapp = new WhatsAppLocalService(config, store, drive, fullBackup, usaStore, usaDrive, aiConversation);
 const app = Fastify({ logger: true, logController: new LogController({ disableRequestLogging: true }), bodyLimit: 1024 * 1024 });
 
 const STATUS_LABELS: Record<CaseStatus, string> = {
@@ -96,6 +98,7 @@ app.get("/api/system/status", async () => ({
   organizationName: config.ORGANIZATION_NAME,
   whatsapp: whatsapp.status(),
   googleDrive: drive.status(),
+  aiConversation: aiConversation.status(),
   databasePath: config.databasePath,
   usaDatabasePath: path.join(config.dataDir, "usa", "bot.sqlite"),
 }));

@@ -11,6 +11,9 @@ import type { CaseRecord, OutgoingMessage } from "../domain/types.js";
 import type { GoogleDriveService } from "./google-drive.js";
 import type { FullBackupService } from "./full-backup.js";
 import type { PendingDocument, SQLiteStore } from "./sqlite-store.js";
+import type { OpenAIConversationService } from "./openai-conversation.js";
+import { fieldById } from "../domain/catalog.js";
+import { usaFieldById } from "../domain/usa-catalog.js";
 
 const ALLOWED_MIME = new Set(["application/pdf", "image/jpeg", "image/png", "image/webp"]);
 const BOT_START_CANADA_COMMAND = "START BOT CANADA";
@@ -166,6 +169,15 @@ interface ChatIdentity {
 }
 type WorkflowKind = "CANADA" | "USA";
 
+const AI_BYPASS_COMMANDS = new Set([
+  "saltar", "no sé", "no se", "no tengo", "no aplica", "n/a", "pendiente", "después", "despues",
+  "resumen", "pendientes", "ayuda", "alto", "pausa", "pausar", "detente", "para", "continuar", "borrar mis datos",
+]);
+
+function normalizedCommand(value: string): string {
+  return value.trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 function timelineMessagePreview(body: string | undefined, type: string): string {
   const normalized = String(body ?? "").replace(/\s+/g, " ").trim();
   if (normalized) return normalized.slice(0, 500);
@@ -210,6 +222,7 @@ export class WhatsAppLocalService {
     private readonly fullBackup: FullBackupService,
     private readonly usaStore: SQLiteStore,
     private readonly usaDrive: GoogleDriveService,
+    private readonly aiConversation: OpenAIConversationService,
   ) {
     this.automationControlPath = path.join(config.dataDir, "automation-control.json");
     this.runtime = { state: "STARTING", qrDataUrl: null, account: null, lastError: null, automationPaused: this.loadAutomationPaused() };
@@ -498,7 +511,7 @@ export class WhatsAppLocalService {
       }
 
       const previousFullName = caseRecord.answers["identity.full_name"]?.value;
-      const result = workflow === "USA" ? handleUsaText(caseRecord, message.body) : handleClientText(caseRecord, message.body);
+      const result = await this.handleConversationText(workflow!, caseRecord, message.body);
       activeStore!.saveCase(result.caseRecord);
       for (const event of result.auditEvents) activeStore!.audit(caseRecord.id, event.event, event.detail);
       activeStore!.markProcessed(messageId);
@@ -513,6 +526,49 @@ export class WhatsAppLocalService {
       const detail = error instanceof Error ? error.message : String(error);
       if (timelineStore && timelineClientId) timelineStore.audit(timelineClientId, "CLIENT_MESSAGE_PROCESSING_FAILED", { error: detail });
       this.setError(error, false);
+    }
+  }
+
+  private async handleConversationText(workflow: WorkflowKind, caseRecord: CaseRecord, raw: string): Promise<ReturnType<typeof handleClientText>> {
+    const deterministic = (value: string) => workflow === "USA" ? handleUsaText(caseRecord, value) : handleClientText(caseRecord, value);
+    const aiStatus = this.aiConversation.status();
+    if (!aiStatus.active || !raw.trim() || !["ACTIVE", "PAUSED"].includes(caseRecord.status)) return deterministic(raw);
+    if (!caseRecord.currentFieldId || caseRecord.currentFieldId === "__proposal_batch__") return deterministic(raw);
+    if (AI_BYPASS_COMMANDS.has(normalizedCommand(raw))) return deterministic(raw);
+    if (/^(?:hola|buen(?:os|as)?\s+(?:dias|tardes|noches)|que\s+tal)$/i.test(normalizedCommand(raw))) return deterministic(raw);
+
+    const field = workflow === "USA"
+      ? usaFieldById(caseRecord.currentFieldId, caseRecord.answers)
+      : fieldById(caseRecord.currentFieldId, caseRecord.answers);
+    if (!field || field.id === "workflow.passport_uploaded" || field.id.endsWith(".document")) return deterministic(raw);
+
+    try {
+      const interpretation = await this.aiConversation.interpret(workflow, field, raw);
+      const aiAudit = {
+        event: "AI_INTERPRETATION_COMPLETED",
+        detail: { workflow, fieldId: field.id, action: interpretation.action, confidence: interpretation.confidence, model: aiStatus.model },
+      };
+      if (interpretation.action !== "ANSWER" || interpretation.confidence < 75 || !interpretation.normalizedAnswer.trim()) {
+        return {
+          caseRecord,
+          outgoing: [{ type: "text", body: `Quiero asegurarme de registrar correctamente *${field.label.toLocaleLowerCase("es")}*.\n\n${field.prompt}` }],
+          auditEvents: [aiAudit],
+        };
+      }
+      const result = deterministic(interpretation.normalizedAnswer);
+      const accepted = result.auditEvents.some((event) => /ANSWER_(?:CONFIRMED|RECORDED)/.test(event.event));
+      if (accepted && result.caseRecord.status === "ACTIVE" && result.outgoing[0]?.type === "text") {
+        result.outgoing[0] = { type: "text", body: `Perfecto, gracias.\n\n${result.outgoing[0].body}` };
+      }
+      result.auditEvents.unshift(aiAudit);
+      return result;
+    } catch (error) {
+      const result = deterministic(raw);
+      result.auditEvents.unshift({
+        event: "AI_INTERPRETATION_FAILED",
+        detail: { workflow, fieldId: field.id, model: aiStatus.model, error: error instanceof Error ? error.message : String(error), fallback: "DETERMINISTIC_ENGINE" },
+      });
+      return result;
     }
   }
 

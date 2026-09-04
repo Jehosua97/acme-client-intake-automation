@@ -21,6 +21,9 @@ const schema = z.object({
   FULL_BACKUP_OUTPUT_DIR: z.string().trim().default(""),
   CHROME_EXECUTABLE_PATH: z.string().default(""),
   MAX_DOCUMENT_MB: z.coerce.number().min(1).max(100).default(20),
+  OPENAI_API_KEY: z.string().trim().default(""),
+  OPENAI_MODEL: z.string().trim().min(1).default("gpt-5.4-mini"),
+  AI_CONVERSATION_ENABLED: z.enum(["true", "false"]).default("false").transform((value) => value === "true"),
 });
 
 export type Config = z.infer<typeof schema> & {
