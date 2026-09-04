@@ -135,6 +135,10 @@ export function isAuthorizedCommandPhone(resolvedPhone: string, configuredPhone:
 
 export const isAuthorizedBackupPhone = isAuthorizedCommandPhone;
 
+export function parseAuthorizedSelfServiceCommand(value: string, resolvedPhone: string, configuredPhone: string): AdminBotCommand | null {
+  return isAuthorizedCommandPhone(resolvedPhone, configuredPhone) ? parseAdminBotCommand(value) : null;
+}
+
 function serializedText(value: unknown): string | null {
   if (typeof value === "string" && value.trim()) return value;
   if (value && typeof value === "object") {
@@ -315,8 +319,8 @@ export class WhatsAppLocalService {
       }
       const identity = await this.resolveChatIdentity(chatId, [remoteFromId, serializedText(message.to)]);
       if (parsedCommand === "STOP_ALL") {
-        await this.stopCaseByAdmin(chatId, identity, "CANADA");
-        await this.stopCaseByAdmin(chatId, identity, "USA");
+        await this.stopCaseByAdmin(chatId, identity, "CANADA", "OWNER");
+        await this.stopCaseByAdmin(chatId, identity, "USA", "OWNER");
         if (messageId) {
           this.store.markProcessed(messageId);
           this.usaStore.markProcessed(messageId);
@@ -358,7 +362,7 @@ export class WhatsAppLocalService {
     return caseRecord;
   }
 
-  private async stopCaseByAdmin(chatId: string, identity: ChatIdentity, workflow: WorkflowKind): Promise<void> {
+  private async stopCaseByAdmin(chatId: string, identity: ChatIdentity, workflow: WorkflowKind, initiatedBy: "OWNER" | "TEST_PHONE"): Promise<void> {
     const store = this.storeFor(workflow);
     const caseRecord = this.caseForIdentity(chatId, identity, workflow);
     if (!caseRecord) {
@@ -371,7 +375,7 @@ export class WhatsAppLocalService {
     }
     const result = workflow === "USA" ? stopUsaIntake(caseRecord) : stopIntakeByAdmin(caseRecord);
     store.saveCase(result.caseRecord);
-    for (const event of result.auditEvents) store.audit(caseRecord.id, event.event, { ...event.detail, chatId });
+    for (const event of result.auditEvents) store.audit(caseRecord.id, event.event, { ...event.detail, chatId, initiatedBy });
   }
 
   private async startOrResumeCase(chatId: string, identity: ChatIdentity, initiatedBy: "OWNER" | "TEST_PHONE", workflow: WorkflowKind): Promise<void> {
@@ -389,7 +393,7 @@ export class WhatsAppLocalService {
         result = workflow === "USA" ? startUsaIntake(existing) : startIntake(existing);
       } else if (existing.status === "PAUSED") {
         result = workflow === "USA" ? handleUsaText(existing, "CONTINUAR") : handleClientText(existing, "CONTINUAR");
-      } else if ((existing.status === "STOPPED_BY_ADMIN" && initiatedBy === "OWNER")
+      } else if (existing.status === "STOPPED_BY_ADMIN"
         || (workflow === "CANADA" && existing.status === "NEEDS_STAFF_REVIEW" && hasPendingClientPassportQuestions(existing))) {
         result = workflow === "USA" ? resumeUsaIntake(existing) : resumeIntakeByAdmin(existing);
       }
@@ -398,10 +402,6 @@ export class WhatsAppLocalService {
         store.audit(existing.id, "BOT_STARTED_OR_RESUMED_FROM_CHAT", { chatId, initiatedBy, workflow });
         for (const event of result.auditEvents) store.audit(existing.id, event.event, event.detail);
         await this.sendAll(chatId, result.outgoing, store, existing.id);
-        return;
-      }
-      if (existing.status === "STOPPED_BY_ADMIN") {
-        store.audit(existing.id, "TEST_PHONE_START_IGNORED_AFTER_ADMIN_STOP", { initiatedBy });
         return;
       }
       store.audit(existing.id, "DUPLICATE_START_IGNORED", { status: existing.status, initiatedBy });
@@ -449,9 +449,40 @@ export class WhatsAppLocalService {
         this.store.markProcessed(messageId);
         return;
       }
-      // Incoming client messages can never activate a workflow. Activation is
-      // accepted exclusively from an owner-authored message_create event.
       const identity = await this.resolveChatIdentity(sourceChatId, [remoteFromId, serializedText(message.from)]);
+      const parsedIncomingCommand = parseAdminBotCommand(message.body);
+      const selfServiceCommand = parseAuthorizedSelfServiceCommand(message.body, identity.phone, this.config.TEST_SELF_START_PHONE);
+      if (parsedIncomingCommand && !selfServiceCommand) {
+        this.store.audit(null, "UNAUTHORIZED_CLIENT_BOT_COMMAND_IGNORED", { command: parsedIncomingCommand, phone: identity.phone });
+        this.store.markProcessed(messageId);
+        return;
+      }
+      if (selfServiceCommand) {
+        if (this.runtime.automationPaused && selfServiceCommand !== "STOP_ALL") {
+          this.store.audit(null, "TEST_PHONE_COMMAND_IGNORED_WHILE_AUTOMATION_PAUSED", { command: selfServiceCommand, phone: identity.phone });
+          this.store.markProcessed(messageId);
+          return;
+        }
+        if (selfServiceCommand === "STOP_ALL") {
+          await this.stopCaseByAdmin(sourceChatId, identity, "CANADA", "TEST_PHONE");
+          await this.stopCaseByAdmin(sourceChatId, identity, "USA", "TEST_PHONE");
+          this.store.markProcessed(messageId);
+          this.usaStore.markProcessed(messageId);
+          return;
+        }
+        if (selfServiceCommand === "START_ETA") {
+          this.store.markProcessed(messageId);
+          await this.client.sendMessage(sourceChatId, "El flujo eTA todavía no está habilitado. No se inició ningún expediente.");
+          return;
+        }
+        const requestedWorkflow: WorkflowKind = selfServiceCommand === "START_USA" ? "USA" : "CANADA";
+        await this.startOrResumeCase(sourceChatId, identity, "TEST_PHONE", requestedWorkflow);
+        this.storeFor(requestedWorkflow).markProcessed(messageId);
+        return;
+      }
+
+      // Normal incoming client messages never activate a workflow. The sole
+      // exception above is the explicitly configured testing phone.
       const canadaCase = this.caseForIdentity(sourceChatId, identity, "CANADA");
       const usaCase = this.caseForIdentity(sourceChatId, identity, "USA");
       const open = (record: CaseRecord | null) => record && !["STOPPED_BY_ADMIN", "NEEDS_STAFF_REVIEW", "READY_FOR_REVIEW", "COMPLETE", "DECLINED", "DELETION_REQUESTED"].includes(record.status);

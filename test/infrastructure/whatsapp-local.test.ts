@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isAuthorizedBackupPhone, isAuthorizedCommandPhone, normalizeWhatsAppMessageId, parseAdminBotCommand, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
+import { isAuthorizedBackupPhone, isAuthorizedCommandPhone, normalizeWhatsAppMessageId, parseAdminBotCommand, parseAuthorizedSelfServiceCommand, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
 
 describe("WhatsApp message ID normalization", () => {
   it("accepts the serialized ID provided by normal WhatsApp messages", () => {
@@ -53,5 +53,12 @@ describe("WhatsApp admin activation commands", () => {
     assert.equal(parseAdminBotCommand("iniciar bot canada"), null);
     assert.equal(parseAdminBotCommand("stop bot usa"), null);
     assert.equal(parseAdminBotCommand(""), null);
+  });
+
+  it("allows start and stop from only the configured testing phone", () => {
+    assert.equal(parseAuthorizedSelfServiceCommand("START BOT CANADA", "+14378781645", "+14378781645"), "START_CANADA");
+    assert.equal(parseAuthorizedSelfServiceCommand("STOP BOT", "+14378781645", "+14378781645"), "STOP_ALL");
+    assert.equal(parseAuthorizedSelfServiceCommand("START BOT CANADA", "+14165550123", "+14378781645"), null);
+    assert.equal(parseAuthorizedSelfServiceCommand("STOP BOT", "+14165550123", "+14378781645"), null);
   });
 });
