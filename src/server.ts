@@ -319,6 +319,22 @@ app.put("/api/clients/:id/answers/:fieldId", async (request, reply) => {
   }
 });
 
+app.post("/api/clients/:id/recover-current-answer", async (request, reply) => {
+  const id = (request.params as { id: string }).id;
+  const body = z.object({ value: z.string().trim().min(1).max(500) }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: "La respuesta que se recuperará es obligatoria" });
+  try {
+    return { ok: true, ...(await whatsapp.recoverCurrentAnswer("CANADA", id, body.data.value)) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message === "CLIENT_NOT_FOUND") return reply.code(404).send({ error: "Cliente no encontrado" });
+    if (message === "CLIENT_NOT_WAITING_FOR_ANSWER") return reply.code(409).send({ error: "El cliente ya no está esperando esa respuesta" });
+    if (message === "ANSWER_NOT_ACCEPTED") return reply.code(400).send({ error: "La respuesta no pasó la validación normal" });
+    if (message === "WHATSAPP_NOT_READY") return reply.code(503).send({ error: "WhatsApp no está conectado" });
+    throw error;
+  }
+});
+
 app.post("/api/clients/:id/custom-fields", async (request, reply) => {
   const id = (request.params as { id: string }).id;
   const body = z.object({ label: z.string().trim().min(1).max(120), value: z.string().trim().min(1).max(5_000) }).safeParse(request.body);

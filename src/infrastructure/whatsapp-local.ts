@@ -7,7 +7,7 @@ import type { Message } from "whatsapp-web.js";
 import type { Config } from "../config.js";
 import { handleClientText, handlePassportDocument, hasPendingClientPassportQuestions, resumeIntakeByAdmin, startIntake, stopIntakeByAdmin } from "../domain/engine.js";
 import { handleUsaDocument, handleUsaText, resumeUsaIntake, startUsaIntake, stopUsaIntake } from "../domain/usa-engine.js";
-import type { CaseRecord, OutgoingMessage } from "../domain/types.js";
+import type { CaseRecord, FieldDefinition, OutgoingMessage } from "../domain/types.js";
 import type { GoogleDriveService } from "./google-drive.js";
 import type { FullBackupService } from "./full-backup.js";
 import type { PendingDocument, SQLiteStore } from "./sqlite-store.js";
@@ -177,6 +177,7 @@ const AI_BYPASS_COMMANDS = new Set([
   "saltar", "no sé", "no se", "no tengo", "no aplica", "n/a", "pendiente", "después", "despues",
   "resumen", "pendientes", "ayuda", "alto", "pausa", "pausar", "detente", "para", "continuar", "borrar mis datos",
 ]);
+const DETERMINISTIC_FIRST_KINDS = new Set<FieldDefinition["kind"]>(["yes_no", "date", "year_month", "integer", "email", "phone", "money"]);
 
 function normalizedCommand(value: string): string {
   return value.trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
@@ -254,6 +255,27 @@ export class WhatsAppLocalService {
   }
 
   status(): WhatsAppRuntimeStatus { return { ...this.runtime }; }
+
+  async recoverCurrentAnswer(workflow: WorkflowKind, clientId: string, raw: string): Promise<{ currentFieldId: string | null; status: CaseRecord["status"] }> {
+    if (this.runtime.state !== "READY") throw new Error("WHATSAPP_NOT_READY");
+    const store = this.storeFor(workflow);
+    const caseRecord = store.getCaseById(clientId);
+    const chatId = store.getPrimaryChatId(clientId);
+    if (!caseRecord || !chatId) throw new Error("CLIENT_NOT_FOUND");
+    if (caseRecord.status !== "ACTIVE" || !caseRecord.currentFieldId) throw new Error("CLIENT_NOT_WAITING_FOR_ANSWER");
+    const expectedFieldId = caseRecord.currentFieldId;
+    const result = workflow === "USA" ? handleUsaText(caseRecord, raw) : handleClientText(caseRecord, raw);
+    const accepted = result.auditEvents.some((event) => /ANSWER_(?:CONFIRMED|RECORDED)/.test(event.event));
+    if (!accepted) throw new Error("ANSWER_NOT_ACCEPTED");
+    if (result.caseRecord.status === "ACTIVE" && result.outgoing[0]?.type === "text") {
+      result.outgoing[0] = { type: "text", body: `Perfecto, gracias.\n\n${result.outgoing[0].body}` };
+    }
+    store.saveCase(result.caseRecord);
+    store.audit(clientId, "CLIENT_ANSWER_RECOVERED_BY_ADMIN", { workflow, fieldId: expectedFieldId });
+    for (const event of result.auditEvents) store.audit(clientId, event.event, event.detail);
+    await this.sendAll(chatId, result.outgoing, store, clientId);
+    return { currentFieldId: result.caseRecord.currentFieldId, status: result.caseRecord.status };
+  }
 
   async setAutomationPaused(paused: boolean): Promise<WhatsAppRuntimeStatus> {
     await mkdir(path.dirname(this.automationControlPath), { recursive: true });
@@ -602,6 +624,21 @@ export class WhatsAppLocalService {
       ? this.previousAnswerAfterAiClarification(workflow, caseRecord.id, messageId, field.id)
       : null;
     const effectiveRaw = recoveredAnswer ?? raw;
+
+    if (DETERMINISTIC_FIRST_KINDS.has(field.kind)) {
+      const result = deterministic(effectiveRaw);
+      const accepted = result.auditEvents.some((event) => /ANSWER_(?:CONFIRMED|RECORDED)/.test(event.event));
+      if (accepted) {
+        result.auditEvents.unshift({
+          event: "AI_BYPASSED_FOR_VALID_STRUCTURED_INPUT",
+          detail: { workflow, fieldId: field.id, kind: field.kind, recoveredPreviousAnswer: Boolean(recoveredAnswer) },
+        });
+        if (result.caseRecord.status === "ACTIVE" && result.outgoing[0]?.type === "text") {
+          result.outgoing[0] = { type: "text", body: `Perfecto, gracias.\n\n${result.outgoing[0].body}` };
+        }
+        return result;
+      }
+    }
 
     try {
       const interpretation = await this.aiConversation.interpret(workflow, field, effectiveRaw);

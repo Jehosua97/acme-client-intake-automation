@@ -374,6 +374,16 @@ describe("conversation engine", () => {
     assert.match(result.outgoing[0]?.type === "text" ? result.outgoing[0].body : "", /debe haber comenzado antes de 02\/2023/i);
   });
 
+  it("accepts an activity that began before the ten-year cutoff", () => {
+    const caseRecord = activeCase();
+    caseRecord.answers["employment.1.from"] = confirmed("employment.1.from", "2018-07");
+    caseRecord.currentFieldId = "employment.2.from";
+    const result = handleClientText(caseRecord, "01/2014");
+    assert.equal(result.caseRecord.answers["employment.2.from"]?.value, "2014-01");
+    assert.equal(result.caseRecord.answers["employment.2.until"]?.value, "2018-06");
+    assert.equal(result.auditEvents.some((event) => event.event === "ANSWER_CONFIRMED"), true);
+  });
+
   it("rejects a departure date that is not after arrival in Canada", () => {
     const caseRecord = activeCase();
     caseRecord.answers["visit.from"] = confirmed("visit.from", "2027-06-15");

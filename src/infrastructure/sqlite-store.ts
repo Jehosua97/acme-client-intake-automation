@@ -229,6 +229,11 @@ export class SQLiteStore {
     return this.hydrate(this.db.prepare("SELECT * FROM clients WHERE id=?").get(id) as Row | undefined);
   }
 
+  getPrimaryChatId(id: string): string | null {
+    const row = this.db.prepare("SELECT chat_id FROM clients WHERE id=?").get(id) as Row | undefined;
+    return row ? String(row.chat_id) : null;
+  }
+
   createCase(chatId: string, phone: string, displayName: string): CaseRecord {
     const existing = this.getCaseByChatId(chatId);
     if (existing) return existing;
