@@ -42,6 +42,11 @@ export interface EmploymentReportRow {
   sortKey: string;
 }
 
+/** PDF-only transliteration. Stored answers and WhatsApp messages remain untouched. */
+export function pdfSafeText(value: string): string {
+  return value.normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+}
+
 const INTERNAL_LABELS: Record<string, string> = {
   "contact.mailing_country": "País de dirección postal",
   "contact.residential_country": "País de residencia",
@@ -65,21 +70,21 @@ const ANSWER_STATUS: Record<Answer["status"], string> = {
 
 function answerText(answer: Answer | undefined): string {
   if (!answer || answer.value === null || answer.value === "") return answer?.status === "PENDING" ? "Pendiente" : "Sin dato";
-  if (answer.value === true) return "Sí";
+  if (answer.value === true) return "Si";
   if (answer.value === false) return "No";
   const value = String(answer.value);
   const date = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
-  if (date) return `${date[3]}/${date[2]}/${date[1]}`;
+  if (date) return value;
   const month = value.match(/^(\d{4})-(\d{2})$/);
-  if (month) return `${month[2]}/${month[1]}`;
-  return value === "CURRENT" ? "ACTUAL" : value;
+  if (month) return value;
+  return pdfSafeText(value === "CURRENT" ? "ACTUAL" : value);
 }
 
 function answerItem(label: string, answer: Answer | undefined): ReportItem {
   const value = answerText(answer);
   const status = answer ? ANSWER_STATUS[answer.status] : undefined;
   return {
-    label,
+    label: pdfSafeText(label),
     value,
     ...(status && status !== "Confirmado" && status !== value ? { status } : {}),
   };
@@ -153,21 +158,21 @@ export function reportSectionsForPdf(data: ClientPdfData): ReportSection[] {
     if (visibleIds.has(fieldId) || fieldId === "workflow.passport_uploaded") continue;
     const label = INTERNAL_LABELS[fieldId] ?? null;
     if (!label || answer.value === null || answer.value === "") continue;
-    systemItems.push({ label, value: answerText(answer), status: ANSWER_STATUS[answer.status] });
+    systemItems.push({ label: pdfSafeText(label), value: answerText(answer), status: ANSWER_STATUS[answer.status] });
   }
 
-  const sections: ReportSection[] = [...grouped].map(([title, items]) => ({ title, items }));
+  const sections: ReportSection[] = [...grouped].map(([title, items]) => ({ title: pdfSafeText(title), items }));
   if (systemItems.length) sections.push({ title: "Datos definidos por el sistema", items: systemItems });
   if (data.customFields.length) sections.push({
     title: "Datos adicionales",
-    items: data.customFields.map((item) => ({ label: item.label, value: item.value })),
+    items: data.customFields.map((item) => ({ label: pdfSafeText(item.label), value: pdfSafeText(item.value) })),
   });
   sections.push({
     title: "Documentos recibidos",
     items: data.documents.length
       ? data.documents.map((document, index) => ({
           label: index === 0 ? "Pasaporte en Google Drive" : `Documento ${index + 1} en Google Drive`,
-          value: `${document.name} · ${(document.size / 1024 / 1024).toFixed(2)} MB · Abrir archivo`,
+          value: pdfSafeText(`${document.name} · ${(document.size / 1024 / 1024).toFixed(2)} MB · Abrir archivo`),
           link: document.webViewLink,
         }))
       : [{ label: "Documentos", value: "Sin documentos guardados" }],
@@ -176,8 +181,7 @@ export function reportSectionsForPdf(data: ClientPdfData): ReportSection[] {
 }
 
 export function clientPdfFilename(name: string): string {
-  const safeName = name
-    .normalize("NFC")
+  const safeName = pdfSafeText(name)
     .replace(/[\\/:*?"<>|\u0000-\u001f]/g, " ")
     .replace(/\s+/g, " ")
     .replace(/[. ]+$/g, "")
@@ -201,12 +205,12 @@ export async function generateClientPdf(data: ClientPdfData): Promise<Buffer> {
   const addPage = () => { doc.addPage({ size: "A4", layout: "landscape", margins: { top: 28, right: 28, bottom: 30, left: 28 } }); };
   const ensureSpace = (height: number) => { if (doc.y + height > pageBottom()) addPage(); };
 
-  doc.fillColor("#1f6b4f").font("Helvetica-Bold").fontSize(8).text(data.organizationName.toUpperCase(), { characterSpacing: 1.2 });
+  doc.fillColor("#1f6b4f").font("Helvetica-Bold").fontSize(8).text(pdfSafeText(data.organizationName.toUpperCase()), { characterSpacing: 1.2 });
   doc.fillColor("#18231f").font("Helvetica-Bold").fontSize(20).text("Expediente de visa", { continued: false });
   doc.moveDown(0.15);
-  doc.font("Helvetica-Bold").fontSize(13).text(data.displayName || "Cliente sin nombre");
+  doc.font("Helvetica-Bold").fontSize(13).text(pdfSafeText(data.displayName || "Cliente sin nombre"));
   doc.font("Helvetica").fontSize(8).fillColor("#5f6d67").text(
-    [data.phone, data.email, `Estado: ${data.statusLabel}`, `Avance interno: ${data.progress.percent}%`].filter(Boolean).join("   |   "),
+    pdfSafeText([data.phone, data.email, `Estado: ${data.statusLabel}`, `Avance interno: ${data.progress.percent}%`].filter(Boolean).join("   |   ")),
   );
   doc.moveDown(0.5);
   doc.moveTo(doc.page.margins.left, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).strokeColor("#d9e2de").stroke();
@@ -239,7 +243,7 @@ export async function generateClientPdf(data: ClientPdfData): Promise<Buffer> {
       const rowHeight = gridRowHeight(row);
       if (doc.y + rowHeight > pageBottom()) {
         addPage();
-        doc.fillColor("#1f6b4f").font("Helvetica-Bold").fontSize(8).text(`${section.title} (continuación)`);
+        doc.fillColor("#1f6b4f").font("Helvetica-Bold").fontSize(8).text(`${section.title} (continuacion)`);
         doc.moveDown(0.35);
       }
       const rowY = doc.y;
@@ -267,14 +271,14 @@ export async function generateClientPdf(data: ClientPdfData): Promise<Buffer> {
   };
 
   const employmentRows = employmentRowsForPdf(data);
-  const employmentHeaders = ["FECHA DE INICIO", "FECHA FINAL", "ACTIVIDAD U OCUPACIÓN", "EMPRESA, INSTITUCIÓN O SITUACIÓN", "CIUDAD Y ESTADO · MÉXICO"];
+  const employmentHeaders = ["FECHA DE INICIO", "FECHA FINAL", "ACTIVIDAD U OCUPACION", "EMPRESA, INSTITUCION O SITUACION", "CIUDAD Y ESTADO · MEXICO"];
   const employmentRatios = [0.11, 0.11, 0.24, 0.29, 0.25];
   const employmentWidths = employmentRatios.map((ratio) => contentWidth * ratio);
   const drawEmploymentHeading = (continuation = false) => {
     const titleY = doc.y;
     doc.roundedRect(doc.page.margins.left, titleY, contentWidth, 18, 4).fill("#eaf3ee");
     doc.fillColor("#1f6b4f").font("Helvetica-Bold").fontSize(9).text(
-      `Actividades de los últimos 10 años · orden cronológico${continuation ? " (continuación)" : ""}`,
+      `Actividades de los ultimos 10 anos · orden cronologico${continuation ? " (continuacion)" : ""}`,
       doc.page.margins.left + 8,
       titleY + 5,
       { width: contentWidth - 16, lineBreak: false },
@@ -334,7 +338,7 @@ export async function generateClientPdf(data: ClientPdfData): Promise<Buffer> {
   for (let index = pages.start; index < pages.start + pages.count; index++) {
     doc.switchToPage(index);
     doc.fillColor("#75817c").font("Helvetica").fontSize(6.5).text(
-      `Generado ${generatedAt.toLocaleString("es-MX")}   |   Página ${index + 1} de ${pages.count}`,
+      `Generado ${generatedAt.getFullYear()}-${String(generatedAt.getMonth() + 1).padStart(2, "0")}-${String(generatedAt.getDate()).padStart(2, "0")} ${String(generatedAt.getHours()).padStart(2, "0")}:${String(generatedAt.getMinutes()).padStart(2, "0")}   |   Pagina ${index + 1} de ${pages.count}`,
       doc.page.margins.left,
       doc.page.height - doc.page.margins.bottom - 9,
       { width: contentWidth, align: "right", lineBreak: false },

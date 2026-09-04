@@ -3,7 +3,7 @@ import { describe, it } from "node:test";
 import { catalogFor } from "../../src/domain/catalog.js";
 import { calculateProgress, newCase, startIntake } from "../../src/domain/engine.js";
 import type { Answer } from "../../src/domain/types.js";
-import { clientPdfFilename, employmentRowsForPdf, generateClientPdf, reportSectionsForPdf, reportSectionTitleForField } from "../../src/infrastructure/client-pdf.js";
+import { clientPdfFilename, employmentRowsForPdf, generateClientPdf, pdfSafeText, reportSectionsForPdf, reportSectionTitleForField } from "../../src/infrastructure/client-pdf.js";
 
 function answer(fieldId: string, value: Answer["value"]): Answer {
   return { fieldId, value, status: "CONFIRMED", source: "CHAT", confidence: 100, updatedAt: new Date().toISOString() };
@@ -59,10 +59,13 @@ describe("client PDF", () => {
     assert.match(pdf.toString("latin1"), /drive\.google\.com/);
     const employment = employmentRowsForPdf({ answers: data.answers, fields });
     assert.deepEqual(employment.map((row) => [row.from.value, row.until.value, row.activity.value]), [
-      ["08/2016", "01/2023", "Estudiante"],
-      ["02/2023", "ACTUAL", "Trabajo remoto"],
+      ["2016-08", "2023-01", "Estudiante"],
+      ["2023-02", "ACTUAL", "Trabajo remoto"],
     ]);
-    assert.equal(clientPdfFilename("Ana María Pérez/López"), "Ana María Pérez López_expediente.pdf");
+    assert.equal(clientPdfFilename("Ana María Pérez/López"), "Ana Maria Perez Lopez_expediente.pdf");
+    assert.equal(pdfSafeText("Muñoz · información en México"), "Munoz · informacion en Mexico");
+    const reportText = JSON.stringify(reportSectionsForPdf(data));
+    assert.doesNotMatch(reportText, /[áéíóúüñÁÉÍÓÚÜÑ]/);
   });
 
   it("does not create empty pages while adding the footer", async () => {
