@@ -1,5 +1,8 @@
 import OpenAI from "openai";
 import { z } from "zod";
+import { readFileSync } from "node:fs";
+import { mkdir, rename, writeFile } from "node:fs/promises";
+import path from "node:path";
 import type { Config } from "../config.js";
 import type { FieldDefinition } from "../domain/types.js";
 
@@ -62,10 +65,14 @@ function safeError(error: unknown, apiKey: string): string {
 
 export class OpenAIConversationService {
   private readonly client: OpenAI | null;
+  private readonly controlPath: string;
+  private enabled: boolean;
   private lastError: string | null = null;
   private lastSuccessAt: string | null = null;
 
   constructor(private readonly config: Config, client?: OpenAI) {
+    this.controlPath = path.join(config.dataDir, "ai-conversation-control.json");
+    this.enabled = this.loadEnabled();
     this.client = client ?? (config.OPENAI_API_KEY
       ? new OpenAI({ apiKey: config.OPENAI_API_KEY, timeout: 15_000, maxRetries: 1 })
       : null);
@@ -74,13 +81,23 @@ export class OpenAIConversationService {
   status(): AiConversationStatus {
     const configured = Boolean(this.config.OPENAI_API_KEY);
     return {
-      enabled: this.config.AI_CONVERSATION_ENABLED,
+      enabled: this.enabled,
       configured,
-      active: this.config.AI_CONVERSATION_ENABLED && configured,
+      active: this.enabled && configured,
       model: this.config.OPENAI_MODEL,
       lastError: this.lastError,
       lastSuccessAt: this.lastSuccessAt,
     };
+  }
+
+  async setEnabled(enabled: boolean): Promise<AiConversationStatus> {
+    if (enabled && !this.client) throw new Error("OPENAI_API_KEY_NOT_CONFIGURED");
+    await mkdir(path.dirname(this.controlPath), { recursive: true });
+    const temporary = `${this.controlPath}.tmp`;
+    await writeFile(temporary, JSON.stringify({ enabled, updatedAt: new Date().toISOString() }), "utf8");
+    await rename(temporary, this.controlPath);
+    this.enabled = enabled;
+    return this.status();
   }
 
   async interpret(workflow: "CANADA" | "USA", field: FieldDefinition, clientMessage: string): Promise<AiInterpretation> {
@@ -120,6 +137,15 @@ export class OpenAIConversationService {
     } catch (error) {
       this.lastError = safeError(error, this.config.OPENAI_API_KEY);
       throw new Error(this.lastError, { cause: error });
+    }
+  }
+
+  private loadEnabled(): boolean {
+    try {
+      const saved = JSON.parse(readFileSync(this.controlPath, "utf8")) as { enabled?: unknown };
+      return typeof saved.enabled === "boolean" ? saved.enabled : this.config.AI_CONVERSATION_ENABLED;
+    } catch {
+      return this.config.AI_CONVERSATION_ENABLED;
     }
   }
 }

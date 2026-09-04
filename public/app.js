@@ -8,6 +8,7 @@ const WORKSPACE_HELP={
   canada:{eyebrow:"Visa Canadá",title:"Ayuda del sistema de visas canadienses",intro:"Este módulo está activo y concentra el flujo actual de expedientes.",features:[
     ["Iniciar el bot","Desde la cuenta vinculada, envía START BOT CANADA en el chat individual del cliente."],
     ["Detener o reanudar","Envía STOP BOT para detener cualquier flujo. START BOT CANADA permite retomarlo sin perder el avance."],
+    ["Bot normal o con IA","Usa el interruptor Modo de respuesta en la parte superior. El bot normal sigue el formulario literalmente; el bot con IA entiende respuestas más naturales. Tu elección queda guardada."],
     ["Consultar el expediente","Abre un cliente en la tabla para revisar respuestas, progreso, documentos, notas y datos adicionales."],
     ["Archivos en Google Drive","Cada cliente tiene una carpeta propia. Puedes abrirla desde la pestaña Documentos dentro de su expediente."],
     ["PDF y correo","Desde el expediente puedes descargar el resumen PDF o enviarlo al correo confirmado del cliente."]
@@ -15,6 +16,7 @@ const WORKSPACE_HELP={
   usa:{eyebrow:"Visa USA",title:"Ayuda del sistema de visas estadounidenses",intro:"Este módulo funciona de manera independiente al sistema de Canadá.",features:[
     ["Iniciar el bot","Envía START BOT USA en el chat individual del cliente."],
     ["Detener o reanudar","Envía STOP BOT para detener cualquier flujo. START BOT USA retoma el avance guardado."],
+    ["Bot normal o con IA","Usa el interruptor Modo de respuesta en la parte superior. Puedes cambiarlo en cualquier momento sin reiniciar WhatsApp ni perder avances."],
     ["Expedientes","La tabla muestra únicamente solicitudes USA y permite revisar respuestas, progreso, documentos y notas."],
     ["Google Drive","Cada cliente USA utiliza una carpeta dentro de una raíz independiente para Visa USA."],
     ["Almacenamiento","Los expedientes USA viven en una base SQLite separada de los expedientes de Canadá."]
@@ -117,10 +119,7 @@ async function loadSystem(){
     const wa=$("#whatsappStatus"),drive=$("#driveStatus");
     wa.className="connection "+(state.system.whatsapp.state==="READY"?"ready":["QR","BACKUP"].includes(state.system.whatsapp.state)?"warn":"");
     wa.querySelector("b").textContent={READY:"Conectado",QR:"Escanear QR",AUTHENTICATED:"Autenticando",STARTING:"Iniciando",BACKUP:"Respaldando",DISCONNECTED:"Desconectado",ERROR:"Error"}[state.system.whatsapp.state]||state.system.whatsapp.state;
-    const ai=$("#aiStatus"),aiState=state.system.aiConversation||{};
-    ai.className="connection "+(aiState.active&&!aiState.lastError?"ready":aiState.enabled?"warn":"");
-    ai.querySelector("b").textContent=aiState.active?(aiState.lastError?"Con error":"Activo"):aiState.enabled?"Falta clave":"Desactivado";
-    ai.title=aiState.lastError||`Modelo: ${aiState.model||"sin configurar"}. La validación del formulario permanece activa.`;
+    renderAiToggle();
     const ds=state.system.googleDrive;
     drive.className="connection "+(ds.connected?"ready":"warn");
     drive.querySelector("b").textContent=ds.connected?"Conectado":ds.configured?"Conectar":"Configurar";
@@ -136,6 +135,13 @@ function renderAutomationToggle(){
   const button=$("#automationToggle"),paused=Boolean(state.system?.whatsapp?.automationPaused);
   button.classList.toggle("paused",paused);button.setAttribute("aria-pressed",String(paused));button.title=paused?"Continuar automatización":"Pausar automatización";
   button.querySelector(".automation-icon").textContent=paused?"▶":"⏸";button.querySelector("b").textContent=paused?"Pausado":"En ejecución";
+}
+function renderAiToggle(){
+  const button=$("#aiToggle"),aiState=state.system?.aiConversation||{},enabled=Boolean(aiState.enabled);
+  button.classList.toggle("enabled",enabled&&Boolean(aiState.configured));button.classList.toggle("warn",enabled&&!aiState.configured);
+  button.setAttribute("aria-pressed",String(enabled));
+  button.querySelector("b").textContent=enabled?(aiState.configured?"Bot con IA":"IA sin configurar"):"Bot normal";
+  button.title=aiState.lastError||(!enabled?"Activar bot con IA":aiState.configured?`Cambiar a bot normal. Modelo actual: ${aiState.model}`:"Falta configurar la clave de OpenAI");
 }
 
 async function loadClients(){
@@ -336,6 +342,7 @@ $("#whatsappStatus").onclick=()=>{if(state.system?.whatsapp.state==="QR")$("#set
 $("#whatsappAlertAction").onclick=()=>{if(state.system?.whatsapp?.state==="QR")$("#setupDialog").showModal();else if(state.system?.whatsapp?.lastError)toast(state.system.whatsapp.lastError);else void loadSystem()};
 $("#backupButton").onclick=async()=>{try{const data=await api("/api/system/backup",{method:"POST"});toast(`Respaldo creado: ${data.filename}`)}catch(error){toast(error.message)}};
 $("#automationToggle").onclick=async()=>{const button=$("#automationToggle"),paused=!Boolean(state.system?.whatsapp?.automationPaused);button.disabled=true;try{const data=await api("/api/system/automation",{method:"POST",body:JSON.stringify({paused})});state.system.whatsapp=data.whatsapp;renderAutomationToggle();toast(paused?"Bot pausado: no enviará mensajes automáticos":"Bot reanudado")}catch(error){toast(error.message)}finally{button.disabled=false}};
+$("#aiToggle").onclick=async()=>{const button=$("#aiToggle"),enabled=!Boolean(state.system?.aiConversation?.enabled);button.disabled=true;try{const data=await api("/api/system/ai-conversation",{method:"POST",body:JSON.stringify({enabled})});state.system.aiConversation=data.aiConversation;renderAiToggle();toast(enabled?"Bot con IA activado":"Bot normal activado: no usará IA")}catch(error){toast(error.message)}finally{button.disabled=false}};
 $("#detailName").onchange=async()=>{try{await api(`${currentClientBase()}/${state.current.id}/answers/identity.full_name`,{method:"PUT",body:JSON.stringify({value:$("#detailName").value})});toast("Nombre actualizado");await refreshCurrent()}catch(error){toast(error.message)}};
 $("#detailStatus").onchange=async()=>{await api(`${currentClientBase()}/${state.current.id}`,{method:"PATCH",body:JSON.stringify({status:$("#detailStatus").value})});toast("Estado actualizado");await (state.currentWorkflow==="usa"?loadUsaClients():loadClients())};
 $("#fieldSearch").oninput=renderInformation;

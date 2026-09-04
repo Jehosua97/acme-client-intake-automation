@@ -109,6 +109,23 @@ app.post("/api/system/automation", async (request, reply) => {
   return { ok: true, whatsapp: await whatsapp.setAutomationPaused(body.data.paused) };
 });
 
+app.post("/api/system/ai-conversation", async (request, reply) => {
+  const body = z.object({ enabled: z.boolean() }).safeParse(request.body);
+  if (!body.success) return reply.code(400).send({ error: "El estado enabled es obligatorio" });
+  try {
+    const aiStatus = await aiConversation.setEnabled(body.data.enabled);
+    const event = body.data.enabled ? "AI_CONVERSATION_ENABLED_FROM_DASHBOARD" : "AI_CONVERSATION_DISABLED_FROM_DASHBOARD";
+    store.audit(null, event, { model: aiStatus.model });
+    usaStore.audit(null, event, { model: aiStatus.model });
+    return { ok: true, aiConversation: aiStatus };
+  } catch (error) {
+    if (error instanceof Error && error.message === "OPENAI_API_KEY_NOT_CONFIGURED") {
+      return reply.code(409).send({ error: "No se puede activar la IA porque falta configurar la clave de OpenAI." });
+    }
+    throw error;
+  }
+});
+
 app.get("/auth/google", async (_request, reply) => {
   try { return reply.redirect(drive.authorizationUrl()); }
   catch (error) { return reply.code(400).type("text/plain").send(error instanceof Error ? error.message : "Error de configuración"); }

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import type OpenAI from "openai";
 import { loadConfig } from "../../src/config.js";
 import type { FieldDefinition } from "../../src/domain/types.js";
@@ -20,6 +23,7 @@ const field: FieldDefinition = {
 function config(overrides: Record<string, string> = {}) {
   return loadConfig({
     APP_ENCRYPTION_KEY: "a".repeat(64),
+    DATA_DIR: path.join(os.tmpdir(), `openai-conversation-test-${process.pid}-${Math.random()}`),
     OPENAI_API_KEY: "test-key",
     OPENAI_MODEL: "gpt-5.4-mini",
     AI_CONVERSATION_ENABLED: "true",
@@ -52,6 +56,34 @@ describe("OpenAI conversation interpreter", () => {
   it("does not activate without both the feature flag and API key", () => {
     assert.equal(new OpenAIConversationService(config({ AI_CONVERSATION_ENABLED: "false" })).status().active, false);
     assert.equal(new OpenAIConversationService(config({ OPENAI_API_KEY: "" })).status().active, false);
+  });
+
+  it("persists the dashboard selection across service restarts", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "ai-conversation-control-"));
+    const client = { responses: { create: async () => ({ status: "completed", output_text: "{}" }) } } as unknown as OpenAI;
+    try {
+      const runtimeConfig = config({ DATA_DIR: dataDir });
+      const service = new OpenAIConversationService(runtimeConfig, client);
+      await service.setEnabled(false);
+      assert.equal(service.status().enabled, false);
+      assert.equal(new OpenAIConversationService(runtimeConfig, client).status().enabled, false);
+
+      await service.setEnabled(true);
+      assert.equal(new OpenAIConversationService(runtimeConfig, client).status().active, true);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
+  });
+
+  it("does not allow enabling AI without a server-side API key", async () => {
+    const dataDir = await mkdtemp(path.join(os.tmpdir(), "ai-conversation-no-key-"));
+    try {
+      const service = new OpenAIConversationService(config({ DATA_DIR: dataDir, OPENAI_API_KEY: "", AI_CONVERSATION_ENABLED: "false" }));
+      await assert.rejects(() => service.setEnabled(true), /OPENAI_API_KEY_NOT_CONFIGURED/);
+      assert.equal(service.status().enabled, false);
+    } finally {
+      await rm(dataDir, { recursive: true, force: true });
+    }
   });
 
   it("fails closed when the provider does not return valid structured output", async () => {
