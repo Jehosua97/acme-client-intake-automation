@@ -10,6 +10,13 @@ const currentMonth = (reference: Date) => reference.toISOString().slice(0, 7);
 
 export function usaImmediateConsistencyIssue(fieldId: string, value: Answer["value"], answers: Answers, reference = new Date()): string | null {
   if (typeof value !== "string") return null;
+  if (fieldId.endsWith(".birth_date")) {
+    const currentYear = reference.getUTCFullYear();
+    const year = Number(value.slice(0, 4));
+    if (value > today(reference) || year < currentYear - 120) {
+      return "Ese año de nacimiento parece incorrecto. Revísalo y envía la fecha nuevamente en formato DD/MM/AAAA.";
+    }
+  }
   if (["identity.birth_date", "mother.birth_date", "father.birth_date", "passport.issue_date", "visa.previous_application_date"].includes(fieldId) && value > today(reference)) {
     return "La fecha no puede estar en el futuro.";
   }

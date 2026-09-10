@@ -72,6 +72,59 @@ export interface StoredAuditEvent {
   createdAt: string;
 }
 
+export const POST_INTAKE_ITEM_STATUSES = [
+  "PENDING_REQUEST",
+  "REQUESTED",
+  "RECEIVED",
+  "NEEDS_REVIEW",
+  "APPROVED",
+  "NOT_REQUIRED",
+] as const;
+
+export type PostIntakeItemStatus = (typeof POST_INTAKE_ITEM_STATUSES)[number];
+export type PostIntakeStage = "NOT_STARTED" | "PDF_CAPTURED" | "CLARIFICATIONS" | "DOCUMENTS_REQUESTED" | "DOCUMENT_REVIEW" | "READY" | "COMPLETE";
+
+export interface PostIntakeItem {
+  id: string;
+  clientId: string;
+  kind: "CLARIFICATION" | "TRAVEL_ITINERARY" | "EMPLOYMENT_LETTER" | "BANK_STATEMENT" | "PROPERTY_EVIDENCE" | "OTHER";
+  label: string;
+  description: string;
+  status: PostIntakeItemStatus;
+  required: boolean;
+  documentId: string | null;
+  notes: string;
+  requestedAt: string | null;
+  receivedAt: string | null;
+  approvedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface StoredPostIntakeSummary {
+  executiveSummary: string;
+  lastProgress: string;
+  pendingClarifications: string[];
+  documentsRequested: string[];
+  documentsReceived: string[];
+  nextAction: string;
+  warnings: string[];
+  evidence: Array<{ statement: string; sourceEventId: number | null; sourceDocumentId: string | null }>;
+}
+
+export interface PostIntakeFollowUp {
+  started: boolean;
+  stage: PostIntakeStage;
+  pdfCapturedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string | null;
+  items: PostIntakeItem[];
+  progress: { completed: number; total: number; percent: number };
+  summary: StoredPostIntakeSummary | null;
+  summaryGeneratedAt: string | null;
+  summaryModel: string | null;
+}
+
 type Row = Record<string, unknown>;
 const iso = () => new Date().toISOString();
 
@@ -170,10 +223,36 @@ export class SQLiteStore {
         detail_json TEXT NOT NULL,
         created_at TEXT NOT NULL
       );
+      CREATE TABLE IF NOT EXISTS post_intake_followups (
+        client_id TEXT PRIMARY KEY REFERENCES clients(id) ON DELETE CASCADE,
+        pdf_captured_at TEXT NOT NULL,
+        completed_at TEXT,
+        summary_json TEXT,
+        summary_generated_at TEXT,
+        summary_model TEXT,
+        updated_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS post_intake_items (
+        id TEXT PRIMARY KEY,
+        client_id TEXT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+        kind TEXT NOT NULL,
+        label TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL,
+        required INTEGER NOT NULL DEFAULT 1,
+        document_id TEXT,
+        notes TEXT NOT NULL DEFAULT '',
+        requested_at TEXT,
+        received_at TEXT,
+        approved_at TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL
+      );
       CREATE INDEX IF NOT EXISTS clients_updated_idx ON clients(updated_at DESC);
       CREATE INDEX IF NOT EXISTS client_chat_ids_client_idx ON client_chat_ids(client_id);
       CREATE INDEX IF NOT EXISTS pending_documents_ready_idx ON pending_documents(status, available_at);
       CREATE INDEX IF NOT EXISTS documents_client_idx ON documents(client_id, created_at DESC);
+      CREATE INDEX IF NOT EXISTS post_intake_items_client_idx ON post_intake_items(client_id, created_at);
       INSERT OR IGNORE INTO client_chat_ids(chat_id,client_id) SELECT chat_id,id FROM clients;
     `);
   }
@@ -356,7 +435,150 @@ export class SQLiteStore {
       documents: this.listDocuments(id),
       customFields: this.listCustomFields(id),
       auditEvents: this.listAuditEvents(id),
+      postIntake: this.getPostIntake(id),
     };
+  }
+
+  startPostIntake(clientId: string): PostIntakeFollowUp {
+    if (!this.getCaseById(clientId)) throw new Error("CLIENT_NOT_FOUND");
+    const existing = this.db.prepare("SELECT 1 FROM post_intake_followups WHERE client_id=?").get(clientId);
+    if (!existing) {
+      const timestamp = iso();
+      this.transaction(() => {
+        this.db.prepare(`INSERT INTO post_intake_followups(client_id,pdf_captured_at,updated_at) VALUES(?,?,?)`).run(clientId, timestamp, timestamp);
+        const insert = this.db.prepare(`INSERT INTO post_intake_items(
+          id,client_id,kind,label,description,status,required,document_id,notes,requested_at,received_at,approved_at,created_at,updated_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`);
+        const defaults: Array<[PostIntakeItem["kind"], string, string, PostIntakeItemStatus, number]> = [
+          ["TRAVEL_ITINERARY", "Itinerario del viaje", "Plan del viaje con destinos, actividades y fechas.", "PENDING_REQUEST", 1],
+          ["EMPLOYMENT_LETTER", "Carta laboral", "Debe incluir fecha de inicio y actividades realizadas.", "PENDING_REQUEST", 1],
+          ["BANK_STATEMENT", "Estado de cuenta reciente", "Estado de cuenta bancario reciente.", "PENDING_REQUEST", 1],
+          ["PROPERTY_EVIDENCE", "Evidencia de propiedad", "Solicitar solamente cuando el cliente haya declarado una propiedad.", "NOT_REQUIRED", 0],
+        ];
+        for (const [kind, label, description, status, required] of defaults) {
+          insert.run(randomUUID(), clientId, kind, label, description, status, required, null, "", null, null, null, timestamp, timestamp);
+        }
+        this.audit(clientId, "POST_INTAKE_STARTED", { pdfCapturedAt: timestamp });
+      });
+    }
+    return this.getPostIntake(clientId)!;
+  }
+
+  getPostIntake(clientId: string): PostIntakeFollowUp | null {
+    if (!this.getCaseById(clientId)) return null;
+    const followUp = this.db.prepare("SELECT * FROM post_intake_followups WHERE client_id=?").get(clientId) as Row | undefined;
+    if (!followUp) {
+      return {
+        started: false,
+        stage: "NOT_STARTED",
+        pdfCapturedAt: null,
+        completedAt: null,
+        updatedAt: null,
+        items: [],
+        progress: { completed: 0, total: 0, percent: 0 },
+        summary: null,
+        summaryGeneratedAt: null,
+        summaryModel: null,
+      };
+    }
+    const items = (this.db.prepare("SELECT * FROM post_intake_items WHERE client_id=? ORDER BY created_at,id").all(clientId) as Row[]).map((row) => this.postIntakeItemFromRow(row));
+    const relevant = items.filter((item) => item.required);
+    const completed = relevant.filter((item) => item.status === "APPROVED").length;
+    const total = relevant.length;
+    let summary: StoredPostIntakeSummary | null = null;
+    try {
+      const parsed = followUp.summary_json ? JSON.parse(String(followUp.summary_json)) : null;
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) summary = parsed as StoredPostIntakeSummary;
+    } catch { /* an invalid old summary is ignored */ }
+    return {
+      started: true,
+      stage: this.postIntakeStage(items, followUp.completed_at === null ? null : String(followUp.completed_at)),
+      pdfCapturedAt: String(followUp.pdf_captured_at),
+      completedAt: followUp.completed_at === null ? null : String(followUp.completed_at),
+      updatedAt: String(followUp.updated_at),
+      items,
+      progress: { completed, total, percent: total ? Math.round((completed / total) * 100) : 100 },
+      summary,
+      summaryGeneratedAt: followUp.summary_generated_at === null ? null : String(followUp.summary_generated_at),
+      summaryModel: followUp.summary_model === null ? null : String(followUp.summary_model),
+    };
+  }
+
+  addPostIntakeItem(clientId: string, label: string, description = ""): PostIntakeItem {
+    const followUp = this.getPostIntake(clientId);
+    if (!followUp?.started) throw new Error("POST_INTAKE_NOT_STARTED");
+    const timestamp = iso();
+    const item: PostIntakeItem = {
+      id: randomUUID(), clientId, kind: "CLARIFICATION", label: label.trim(), description: description.trim(),
+      status: "PENDING_REQUEST", required: true, documentId: null, notes: "", requestedAt: null, receivedAt: null,
+      approvedAt: null, createdAt: timestamp, updatedAt: timestamp,
+    };
+    this.db.prepare(`INSERT INTO post_intake_items(
+      id,client_id,kind,label,description,status,required,document_id,notes,requested_at,received_at,approved_at,created_at,updated_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+      item.id, clientId, item.kind, item.label, item.description, item.status, 1, null, "", null, null, null, timestamp, timestamp,
+    );
+    this.touchPostIntake(clientId, true);
+    this.audit(clientId, "POST_INTAKE_ITEM_ADDED", { itemId: item.id, label: item.label, kind: item.kind });
+    return item;
+  }
+
+  updatePostIntakeItem(clientId: string, itemId: string, changes: { status?: PostIntakeItemStatus | undefined; notes?: string | undefined; documentId?: string | null | undefined }): PostIntakeItem {
+    const row = this.db.prepare("SELECT * FROM post_intake_items WHERE id=? AND client_id=?").get(itemId, clientId) as Row | undefined;
+    if (!row) throw new Error("POST_INTAKE_ITEM_NOT_FOUND");
+    if (changes.documentId) {
+      const document = this.db.prepare("SELECT 1 FROM documents WHERE id=? AND client_id=?").get(changes.documentId, clientId);
+      if (!document) throw new Error("DOCUMENT_NOT_FOUND");
+    }
+    const current = this.postIntakeItemFromRow(row);
+    const status = changes.status ?? current.status;
+    const timestamp = iso();
+    let requestedAt = current.requestedAt;
+    let receivedAt = current.receivedAt;
+    let approvedAt = current.approvedAt;
+    if (status === "PENDING_REQUEST" || status === "NOT_REQUIRED") requestedAt = receivedAt = approvedAt = null;
+    if (status === "REQUESTED") { requestedAt ??= timestamp; receivedAt = null; approvedAt = null; }
+    if (status === "RECEIVED" || status === "NEEDS_REVIEW") { requestedAt ??= timestamp; receivedAt ??= timestamp; approvedAt = null; }
+    if (status === "APPROVED") { requestedAt ??= timestamp; receivedAt ??= timestamp; approvedAt ??= timestamp; }
+    const required = status === "NOT_REQUIRED" ? 0 : 1;
+    this.db.prepare(`UPDATE post_intake_items SET status=?,required=?,document_id=?,notes=?,requested_at=?,received_at=?,approved_at=?,updated_at=?
+      WHERE id=? AND client_id=?`).run(
+      status, required, changes.documentId === undefined ? current.documentId : changes.documentId,
+      changes.notes === undefined ? current.notes : changes.notes.trim(), requestedAt, receivedAt, approvedAt, timestamp, itemId, clientId,
+    );
+    this.touchPostIntake(clientId, changes.status !== undefined || changes.documentId !== undefined);
+    this.audit(clientId, "POST_INTAKE_ITEM_UPDATED", { itemId, label: current.label, status, documentId: changes.documentId ?? current.documentId });
+    return this.postIntakeItemFromRow(this.db.prepare("SELECT * FROM post_intake_items WHERE id=?").get(itemId) as Row);
+  }
+
+  deletePostIntakeItem(clientId: string, itemId: string): void {
+    const row = this.db.prepare("SELECT label FROM post_intake_items WHERE id=? AND client_id=?").get(itemId, clientId) as Row | undefined;
+    if (!row) throw new Error("POST_INTAKE_ITEM_NOT_FOUND");
+    this.db.prepare("DELETE FROM post_intake_items WHERE id=? AND client_id=?").run(itemId, clientId);
+    this.touchPostIntake(clientId, true);
+    this.audit(clientId, "POST_INTAKE_ITEM_DELETED", { itemId, label: String(row.label) });
+  }
+
+  completePostIntake(clientId: string): PostIntakeFollowUp {
+    const followUp = this.getPostIntake(clientId);
+    if (!followUp?.started) throw new Error("POST_INTAKE_NOT_STARTED");
+    const blocking = followUp.items.filter((item) => item.required && item.status !== "APPROVED");
+    if (blocking.length) throw new Error("POST_INTAKE_HAS_PENDING_ITEMS");
+    const timestamp = iso();
+    this.db.prepare("UPDATE post_intake_followups SET completed_at=?,updated_at=? WHERE client_id=?").run(timestamp, timestamp, clientId);
+    this.audit(clientId, "POST_INTAKE_COMPLETED", { completedAt: timestamp });
+    return this.getPostIntake(clientId)!;
+  }
+
+  savePostIntakeSummary(clientId: string, summary: StoredPostIntakeSummary, model: string): PostIntakeFollowUp {
+    const followUp = this.getPostIntake(clientId);
+    if (!followUp?.started) throw new Error("POST_INTAKE_NOT_STARTED");
+    const timestamp = iso();
+    this.db.prepare(`UPDATE post_intake_followups SET summary_json=?,summary_generated_at=?,summary_model=?,updated_at=? WHERE client_id=?`).run(
+      JSON.stringify(summary), timestamp, model, timestamp, clientId,
+    );
+    this.audit(clientId, "POST_INTAKE_SUMMARY_GENERATED", { model });
+    return this.getPostIntake(clientId)!;
   }
 
   updateClient(id: string, changes: { displayName?: string | undefined; notes?: string | undefined; status?: CaseStatus | undefined }): void {
@@ -509,6 +731,44 @@ export class SQLiteStore {
 
   private pendingFromRow(row: Row): PendingDocument {
     return { id: String(row.id), clientId: String(row.client_id), whatsappMessageId: String(row.whatsapp_message_id), status: String(row.status), attempts: Number(row.attempts), availableAt: String(row.available_at) };
+  }
+
+  private postIntakeItemFromRow(row: Row): PostIntakeItem {
+    return {
+      id: String(row.id),
+      clientId: String(row.client_id),
+      kind: String(row.kind) as PostIntakeItem["kind"],
+      label: String(row.label),
+      description: String(row.description ?? ""),
+      status: String(row.status) as PostIntakeItemStatus,
+      required: Number(row.required) === 1,
+      documentId: row.document_id === null ? null : String(row.document_id),
+      notes: String(row.notes ?? ""),
+      requestedAt: row.requested_at === null ? null : String(row.requested_at),
+      receivedAt: row.received_at === null ? null : String(row.received_at),
+      approvedAt: row.approved_at === null ? null : String(row.approved_at),
+      createdAt: String(row.created_at),
+      updatedAt: String(row.updated_at),
+    };
+  }
+
+  private postIntakeStage(items: PostIntakeItem[], completedAt: string | null): PostIntakeStage {
+    if (completedAt) return "COMPLETE";
+    const active = items.filter((item) => item.required);
+    if (active.some((item) => item.kind === "CLARIFICATION" && item.status !== "APPROVED")) return "CLARIFICATIONS";
+    if (active.length > 0 && active.every((item) => item.status === "APPROVED")) return "READY";
+    if (active.some((item) => ["RECEIVED", "NEEDS_REVIEW", "APPROVED"].includes(item.status))) return "DOCUMENT_REVIEW";
+    if (active.some((item) => item.status === "REQUESTED")) return "DOCUMENTS_REQUESTED";
+    return "PDF_CAPTURED";
+  }
+
+  private touchPostIntake(clientId: string, clearCompletion: boolean): void {
+    const timestamp = iso();
+    if (clearCompletion) {
+      this.db.prepare("UPDATE post_intake_followups SET completed_at=NULL,summary_json=NULL,summary_generated_at=NULL,summary_model=NULL,updated_at=? WHERE client_id=?").run(timestamp, clientId);
+    } else {
+      this.db.prepare("UPDATE post_intake_followups SET summary_json=NULL,summary_generated_at=NULL,summary_model=NULL,updated_at=? WHERE client_id=?").run(timestamp, clientId);
+    }
   }
 
   private recoverJobs(): void {

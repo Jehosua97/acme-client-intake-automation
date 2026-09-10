@@ -142,7 +142,7 @@
         <div class="quick-fact"><span>Celular</span><b id="quickPhone">Sin dato</b></div>
         <div class="quick-fact address"><span>Domicilio</span><b id="quickAddress">Sin dato</b></div>
       </div>
-      <nav class="tabs"><button class="active" data-tab="information">Información</button><button data-tab="activity">Actividad <span id="activityBadge">0</span></button><button data-tab="documents">Documentos <span id="documentBadge">0</span></button><button data-tab="extras">Notas y adicionales</button></nav>
+      <nav class="tabs"><button class="active" data-tab="information">Información</button><button data-tab="activity">Actividad <span id="activityBadge">0</span></button><button data-tab="documents">Documentos <span id="documentBadge">0</span></button><button data-tab="followup">Seguimiento final <span id="followupBadge">—</span></button><button data-tab="extras">Notas y adicionales</button></nav>
       <section id="informationTab" class="tab-content">
         <div class="information-tools">
           <label class="detail-search"><span>⌕</span><input id="fieldSearch" type="search" placeholder="Buscar cualquier dato del expediente"></label>
@@ -161,6 +161,9 @@
         <div id="activityTimeline" class="activity-timeline"></div>
       </section>
       <section id="documentsTab" class="tab-content" hidden></section>
+      <section id="followupTab" class="tab-content" hidden>
+        <div id="postIntakeRoot"></div>
+      </section>
       <section id="extrasTab" class="tab-content" hidden>
         <div class="notes-card"><label for="detailNotes">Notas internas</label><textarea id="detailNotes" rows="6" placeholder="Observaciones visibles solo para la empresa"></textarea><button id="saveNotes" class="primary-button">Guardar notas</button></div>
         <div class="custom-card"><div class="section-heading"><div><h3>Datos adicionales</h3><p>Información libre que no pertenece al cuestionario.</p></div></div><div id="customFields"></div><form id="customFieldForm"><input name="label" placeholder="Nombre del dato" required><input name="value" placeholder="Valor" required><button class="primary-button">Agregar</button></form></div>

@@ -9,7 +9,7 @@ import { loadConfig } from "./config.js";
 import { catalogFor } from "./domain/catalog.js";
 import { CASE_STATUSES, type CaseStatus, type Progress } from "./domain/types.js";
 import { clientPdfFilename, generateClientPdf, reportSectionTitleForField, type ClientPdfData } from "./infrastructure/client-pdf.js";
-import { SQLiteStore, type StoreWorkflow, type StoredDocument } from "./infrastructure/sqlite-store.js";
+import { POST_INTAKE_ITEM_STATUSES, SQLiteStore, type StoreWorkflow, type StoredDocument } from "./infrastructure/sqlite-store.js";
 import { GoogleDriveService } from "./infrastructure/google-drive.js";
 import { WhatsAppLocalService } from "./infrastructure/whatsapp-local.js";
 import { FullBackupService } from "./infrastructure/full-backup.js";
@@ -125,6 +125,95 @@ app.post("/api/system/ai-conversation", async (request, reply) => {
     throw error;
   }
 });
+
+function registerPostIntakeRoutes(prefix: "/api/clients" | "/api/usa/clients", targetStore: SQLiteStore, workflow: "CANADA" | "USA"): void {
+  app.post(`${prefix}/:id/post-intake/start`, async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    try { return { postIntake: targetStore.startPostIntake(id) }; }
+    catch (error) {
+      if ((error as Error).message === "CLIENT_NOT_FOUND") return reply.code(404).send({ error: "Cliente no encontrado" });
+      throw error;
+    }
+  });
+
+  app.post(`${prefix}/:id/post-intake/items`, async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const body = z.object({
+      label: z.string().trim().min(1).max(180),
+      description: z.string().trim().max(1_000).default(""),
+    }).safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: body.error.issues[0]?.message });
+    try { return reply.code(201).send({ item: targetStore.addPostIntakeItem(id, body.data.label, body.data.description) }); }
+    catch (error) {
+      const message = (error as Error).message;
+      if (message === "CLIENT_NOT_FOUND") return reply.code(404).send({ error: "Cliente no encontrado" });
+      if (message === "POST_INTAKE_NOT_STARTED") return reply.code(409).send({ error: "Primero marca el PDF como capturado." });
+      throw error;
+    }
+  });
+
+  app.patch(`${prefix}/:id/post-intake/items/:itemId`, async (request, reply) => {
+    const { id, itemId } = request.params as { id: string; itemId: string };
+    const body = z.object({
+      status: z.enum(POST_INTAKE_ITEM_STATUSES).optional(),
+      notes: z.string().max(2_000).optional(),
+      documentId: z.string().trim().min(1).max(200).nullable().optional(),
+    }).refine((value) => Object.keys(value).length > 0, "No hay cambios para guardar").safeParse(request.body);
+    if (!body.success) return reply.code(400).send({ error: body.error.issues[0]?.message });
+    try { return { item: targetStore.updatePostIntakeItem(id, itemId, body.data) }; }
+    catch (error) {
+      const message = (error as Error).message;
+      if (message === "POST_INTAKE_ITEM_NOT_FOUND") return reply.code(404).send({ error: "Pendiente no encontrado" });
+      if (message === "DOCUMENT_NOT_FOUND") return reply.code(409).send({ error: "El documento seleccionado no pertenece a este expediente" });
+      throw error;
+    }
+  });
+
+  app.delete(`${prefix}/:id/post-intake/items/:itemId`, async (request, reply) => {
+    const { id, itemId } = request.params as { id: string; itemId: string };
+    try { targetStore.deletePostIntakeItem(id, itemId); return { ok: true }; }
+    catch (error) {
+      if ((error as Error).message === "POST_INTAKE_ITEM_NOT_FOUND") return reply.code(404).send({ error: "Pendiente no encontrado" });
+      throw error;
+    }
+  });
+
+  app.post(`${prefix}/:id/post-intake/complete`, async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    try { return { postIntake: targetStore.completePostIntake(id) }; }
+    catch (error) {
+      const message = (error as Error).message;
+      if (message === "POST_INTAKE_NOT_STARTED") return reply.code(409).send({ error: "Primero marca el PDF como capturado." });
+      if (message === "POST_INTAKE_HAS_PENDING_ITEMS") return reply.code(409).send({ error: "Todavía hay aclaraciones o documentos pendientes de aprobar." });
+      throw error;
+    }
+  });
+
+  app.post(`${prefix}/:id/post-intake/summary`, async (request, reply) => {
+    const id = (request.params as { id: string }).id;
+    const details = targetStore.getClientDetails(id);
+    if (!details) return reply.code(404).send({ error: "Cliente no encontrado" });
+    const postIntake = details.postIntake as Record<string, unknown>;
+    if (!postIntake.started) return reply.code(409).send({ error: "Primero marca el PDF como capturado." });
+    try {
+      const summary = await aiConversation.summarizePostIntake(workflow, {
+        client: { displayName: details.displayName, phone: details.phoneE164 },
+        checklist: postIntake,
+        documents: details.documents,
+        timeline: details.auditEvents,
+      });
+      return { postIntake: targetStore.savePostIntakeSummary(id, summary, aiConversation.status().model) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      targetStore.audit(id, "POST_INTAKE_SUMMARY_FAILED", { error: message });
+      if (message === "OPENAI_API_KEY_NOT_CONFIGURED") return reply.code(409).send({ error: "Falta configurar la clave de OpenAI para generar el resumen." });
+      return reply.code(502).send({ error: "No fue posible generar el resumen ahora. El checklist permanece guardado." });
+    }
+  });
+}
+
+registerPostIntakeRoutes("/api/clients", store, "CANADA");
+registerPostIntakeRoutes("/api/usa/clients", usaStore, "USA");
 
 app.get("/auth/google", async (_request, reply) => {
   try { return reply.redirect(drive.authorizationUrl()); }

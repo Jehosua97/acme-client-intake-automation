@@ -37,7 +37,7 @@ describe("OpenAI conversation interpreter", () => {
       responses: {
         create: async () => ({
           status: "completed",
-          output_text: JSON.stringify({ action: "ANSWER", normalizedAnswer: "04/09/1990", confidence: 97 }),
+          output_text: JSON.stringify({ action: "ANSWER", normalizedAnswer: "04/09/1990", confidence: 97, clarificationReason: "NONE" }),
         }),
       },
     } as unknown as OpenAI;
@@ -47,10 +47,30 @@ describe("OpenAI conversation interpreter", () => {
       action: "ANSWER",
       normalizedAnswer: "04/09/1990",
       confidence: 97,
+      clarificationReason: "NONE",
     });
     assert.equal(service.status().active, true);
     assert.equal(service.status().lastError, null);
     assert.ok(service.status().lastSuccessAt);
+  });
+
+  it("reports the specific reason when a work answer needs one concise clarification", async () => {
+    const client = {
+      responses: {
+        create: async () => ({
+          status: "completed",
+          output_text: JSON.stringify({
+            action: "CLARIFY",
+            normalizedAnswer: "",
+            confidence: 98,
+            clarificationReason: "MISSING_BUSINESS_TYPE",
+          }),
+        }),
+      },
+    } as unknown as OpenAI;
+    const service = new OpenAIConversationService(config(), client);
+
+    assert.equal((await service.interpret("CANADA", { ...field, id: "employment.1.activity" }, "Negocio propio")).clarificationReason, "MISSING_BUSINESS_TYPE");
   });
 
   it("does not activate without both the feature flag and API key", () => {
@@ -94,5 +114,33 @@ describe("OpenAI conversation interpreter", () => {
 
     await assert.rejects(() => service.interpret("USA", field, "tal vez en septiembre"));
     assert.match(service.status().lastError ?? "", /invalid_type|Invalid input/i);
+  });
+
+  it("creates a structured post-intake summary only when explicitly requested", async () => {
+    let calls = 0;
+    const expected = {
+      executiveSummary: "El PDF fue capturado y quedan dos documentos pendientes.",
+      lastProgress: "Se recibió la carta laboral.",
+      pendingClarifications: [],
+      documentsRequested: ["Itinerario", "Estado de cuenta"],
+      documentsReceived: ["Carta laboral"],
+      nextAction: "Preparar un recordatorio para los dos documentos faltantes.",
+      warnings: ["El contenido de la carta no ha sido aprobado por el administrador."],
+      evidence: [{ statement: "Carta laboral recibida", sourceEventId: 15, sourceDocumentId: "doc-1" }],
+    };
+    const client = {
+      responses: {
+        create: async (request: { store?: boolean }) => {
+          calls += 1;
+          assert.equal(request.store, false);
+          return { status: "completed", output_text: JSON.stringify(expected) };
+        },
+      },
+    } as unknown as OpenAI;
+    const service = new OpenAIConversationService(config({ AI_CONVERSATION_ENABLED: "false" }), client);
+
+    assert.equal(calls, 0);
+    assert.deepEqual(await service.summarizePostIntake("CANADA", { checklist: [], timeline: [] }), expected);
+    assert.equal(calls, 1);
   });
 });

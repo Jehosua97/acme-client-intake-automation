@@ -3,6 +3,12 @@ const STATUS = {
   WAITING_FOR_CLIENT:"Esperando cliente",NEEDS_STAFF_REVIEW:"Revisión necesaria",READY_FOR_REVIEW:"Listo para revisar",
   COMPLETE:"Completo",DECLINED:"No aceptó",DELETION_REQUESTED:"Borrado solicitado"
 };
+const POST_INTAKE_STATUS={
+  PENDING_REQUEST:"Pendiente de solicitar",REQUESTED:"Solicitado",RECEIVED:"Recibido",NEEDS_REVIEW:"Revisión necesaria",APPROVED:"Aprobado",NOT_REQUIRED:"No requerido"
+};
+const POST_INTAKE_STAGE={
+  NOT_STARTED:"Sin iniciar",PDF_CAPTURED:"PDF capturado",CLARIFICATIONS:"Aclaraciones pendientes",DOCUMENTS_REQUESTED:"Documentos solicitados",DOCUMENT_REVIEW:"Documentos en revisión",READY:"Listo para completar",COMPLETE:"Seguimiento completo"
+};
 const state={clients:[],usaClients:[],current:null,currentWorkflow:"canada",system:null,pendingOnly:false,clientSort:{key:"updatedAt",direction:"desc"}};
 const WORKSPACE_HELP={
   canada:{eyebrow:"Visa Canadá",title:"Ayuda del sistema de visas canadienses",intro:"Este módulo está activo y concentra el flujo actual de expedientes.",features:[
@@ -210,7 +216,7 @@ async function openClient(id,workflow="canada"){
   $("#downloadPdf").href=`${currentClientBase()}/${encodeURIComponent(c.id)}/pdf`;
   $("#emailPdf").disabled=!c.answers["contact.email"]?.value;$("#emailPdf").title=c.answers["contact.email"]?.value?`Enviar a ${c.answers["contact.email"].value}`:"El cliente todavía no ha proporcionado su correo";
   const select=$("#detailStatus");select.replaceChildren(...Object.entries(STATUS).map(([value,label])=>{const option=el("option",null,label);option.value=value;option.selected=value===c.status;return option}));
-  $("#detailNotes").value=c.notes||"";renderInformation();renderActivity();renderDocuments();renderCustom();showTab("information");if(!$("#clientDialog").open)$("#clientDialog").showModal();
+  $("#detailNotes").value=c.notes||"";renderInformation();renderActivity();renderDocuments();renderPostIntake();renderCustom();showTab("information");if(!$("#clientDialog").open)$("#clientDialog").showModal();
 }
 function displaySection(field){return field.displaySection||field.section}
 function renderFieldRow(field,compact=false){
@@ -270,6 +276,54 @@ function renderDocuments(){
   const grid=el("div","documents-grid");for(const doc of state.current.documents){const card=el("article","document-card");card.append(el("div","document-icon",doc.mimeType==="application/pdf"?"PDF":"▧"),el("b",null,doc.name),el("span",null,`${(doc.size/1024/1024).toFixed(2)} MB · ${new Date(doc.createdAt).toLocaleDateString("es-MX")}`));const link=el("a",null,"Visualizar en Google Drive ↗");link.href=doc.webViewLink;link.target="_blank";link.rel="noopener";card.append(link);grid.append(card)}
   if(!state.current.documents.length)grid.append(el("p",null,"Todavía no hay documentos guardados."));root.append(grid);$("#documentBadge").textContent=state.current.documents.length;
 }
+function postIntakeStatusClass(status){return status==="APPROVED"?"active":["REQUESTED","RECEIVED","NEEDS_REVIEW","PENDING_REQUEST"].includes(status)?"review":status==="NOT_REQUIRED"?"muted":""}
+function postIntakeDraft(items){
+  const pending=items.filter(item=>item.required&&!['APPROVED','NOT_REQUIRED'].includes(item.status));
+  if(!pending.length)return"No hay aclaraciones ni documentos pendientes por solicitar.";
+  const name=state.current.displayName&&!String(state.current.displayName).startsWith("+")?` ${state.current.displayName.split(/\s+/)[0]}`:"";
+  const lines=pending.map((item,index)=>`${index+1}. ${item.label}${item.description?` — ${item.description}`:""}`);
+  return`Hola${name}, para continuar con tu expediente todavía necesitamos:\n\n${lines.join("\n")}\n\nPor favor envíalo por este chat cuando lo tengas disponible. Gracias.`;
+}
+function renderPostIntake(){
+  const root=$("#postIntakeRoot"),follow=state.current.postIntake||{started:false,items:[],stage:"NOT_STARTED",progress:{completed:0,total:0,percent:0}};root.replaceChildren();
+  $("#followupBadge").textContent=follow.started?(follow.stage==="COMPLETE"?"✓":`${follow.progress.completed}/${follow.progress.total}`):"—";
+  const safety=el("div","post-intake-safety");safety.append(el("b",null,"Controlado por el administrador"),el("span",null,"Esta sección no inicia el bot ni envía mensajes a clientes automáticamente."));root.append(safety);
+  if(!follow.started){
+    const empty=el("article","post-intake-empty");empty.append(el("div","post-intake-empty-icon","✓"),el("h3",null,"Inicia el seguimiento cuando termines los PDF externos"),el("p",null,"Se crearán los pendientes de itinerario, carta laboral, estado de cuenta y evidencia de propiedad. El expediente y la conversación del cliente no cambiarán."));
+    const start=el("button","primary-button","PDF capturado · iniciar seguimiento");start.onclick=async()=>{if(!window.confirm("Confirma que ya capturaste manualmente la información en los PDF externos.\n\nEsta acción NO enviará ningún mensaje por WhatsApp."))return;start.disabled=true;try{await api(`${currentClientBase()}/${state.current.id}/post-intake/start`,{method:"POST",body:"{}"});await refreshCurrent();showTab("followup");toast("Seguimiento final iniciado sin contactar al cliente")}catch(error){toast(error.message)}finally{start.disabled=false}};empty.append(start);root.append(empty);return;
+  }
+  const heading=el("div","post-intake-heading"),headingCopy=el("div");headingCopy.append(el("h3",null,"Seguimiento posterior al PDF"),el("p",null,`PDF marcado como capturado: ${formatTimestamp(follow.pdfCapturedAt)}`));
+  const stage=el("span",`badge ${follow.stage==="COMPLETE"||follow.stage==="READY"?"active":"review"}`,POST_INTAKE_STAGE[follow.stage]||follow.stage);heading.append(headingCopy,stage);root.append(heading);
+  const overview=el("div","post-intake-overview"),progress=el("article");progress.append(el("span",null,"Avance de requisitos"),el("b",null,`${follow.progress.completed} de ${follow.progress.total} aprobados`));const track=el("div","progress-track"),bar=el("i");bar.style.width=`${follow.progress.percent}%`;track.append(bar);progress.append(track);overview.append(progress);
+  const pending=follow.items.filter(item=>item.required&&item.status!=="APPROVED").length,remaining=el("article");remaining.append(el("span",null,"Pendientes"),el("b",null,String(pending)),el("small",null,pending?"Requieren seguimiento":"Nada pendiente"));overview.append(remaining);
+  const mode=el("article");mode.append(el("span",null,"Comunicación"),el("b",null,"Manual"),el("small",null,"Ningún mensaje se envía desde aquí"));overview.append(mode);root.append(overview);
+  const actions=el("div","post-intake-actions");
+  const draftButton=el("button","secondary-button","Preparar mensaje · no enviar");
+  const aiButton=el("button","secondary-button","Actualizar resumen con IA");
+  const completeButton=el("button","primary-button",follow.completedAt?"Seguimiento completado":"Marcar expediente completo");completeButton.disabled=Boolean(follow.completedAt)||pending>0;
+  actions.append(draftButton,aiButton,completeButton);root.append(actions);
+  const draftBox=el("div","message-draft");draftBox.hidden=true;const draftNotice=el("b",null,"Borrador solamente — no se ha enviado por WhatsApp"),draftArea=el("textarea");draftArea.rows=7;const copy=el("button","secondary-button","Copiar texto");copy.onclick=async()=>{try{await navigator.clipboard.writeText(draftArea.value);toast("Texto copiado; tú decides cuándo enviarlo") }catch{draftArea.select();document.execCommand("copy");toast("Texto copiado")}};draftBox.append(draftNotice,draftArea,copy);root.append(draftBox);
+  draftButton.onclick=()=>{draftArea.value=postIntakeDraft(follow.items);draftBox.hidden=false;draftArea.focus()};
+  aiButton.onclick=async()=>{aiButton.disabled=true;aiButton.textContent="Analizando…";try{await api(`${currentClientBase()}/${state.current.id}/post-intake/summary`,{method:"POST",body:"{}"});await refreshCurrent();showTab("followup");toast("Resumen actualizado sin enviar mensajes")}catch(error){toast(error.message)}finally{aiButton.disabled=false;aiButton.textContent="Actualizar resumen con IA"}};
+  completeButton.onclick=async()=>{if(!window.confirm("¿Marcar este seguimiento como completo? Esta acción no enviará mensajes."))return;try{await api(`${currentClientBase()}/${state.current.id}/post-intake/complete`,{method:"POST",body:"{}"});await refreshCurrent();showTab("followup");toast("Seguimiento completado")}catch(error){toast(error.message)}};
+  const summary=el("article","ai-summary-card"),summaryHeading=el("div","section-heading"),summaryTitle=el("div");summaryTitle.append(el("h3",null,"Resumen ejecutivo"),el("p",null,follow.summaryGeneratedAt?`Generado ${formatTimestamp(follow.summaryGeneratedAt)} · ${follow.summaryModel}`:"Generación manual bajo demanda"));summaryHeading.append(summaryTitle);summary.append(summaryHeading);
+  if(follow.summary){
+    const summaryBody=el("div","ai-summary-body");summaryBody.append(el("p","ai-summary-main",follow.summary.executiveSummary));
+    const fields=[["Último avance",follow.summary.lastProgress],["Próxima acción",follow.summary.nextAction]];for(const [label,value] of fields){const item=el("div","summary-field");item.append(el("span",null,label),el("b",null,value||"Sin conclusión"));summaryBody.append(item)}
+    const lists=[["Aclaraciones pendientes",follow.summary.pendingClarifications],["Documentos solicitados",follow.summary.documentsRequested],["Documentos recibidos",follow.summary.documentsReceived],["Advertencias",follow.summary.warnings]];for(const [label,values] of lists){const item=el("div","summary-field");item.append(el("span",null,label));const list=el("ul");for(const value of values||[])list.append(el("li",null,value));if(!(values||[]).length)list.append(el("li","muted", "Sin registros"));item.append(list);summaryBody.append(item)}
+    if(follow.summary.evidence?.length){const evidence=el("div","summary-evidence");evidence.append(el("span",null,"Evidencia utilizada"));for(const source of follow.summary.evidence){const row=el("div");row.append(el("b",null,source.statement));const doc=state.current.documents.find(item=>item.id===source.sourceDocumentId);if(doc){const link=el("a",null,"Ver documento ↗");link.href=doc.webViewLink;link.target="_blank";link.rel="noopener";row.append(link)}else if(source.sourceEventId)row.append(el("small",null,`Evento #${source.sourceEventId} de la línea de tiempo`));evidence.append(row)}summaryBody.append(evidence)}
+    summary.append(summaryBody);
+  }else summary.append(el("p","ai-summary-placeholder","Pulsa “Actualizar resumen con IA” cuando quieras revisar la conversación y el checklist. La IA propone conclusiones; tú conservas el control de los estados."));root.append(summary);
+  const checklist=el("section","post-intake-checklist"),checkHeading=el("div","post-intake-list-heading");checkHeading.append(el("div",null));checkHeading.firstChild.append(el("h3",null,"Checklist de seguimiento"),el("p",null,"Los estados del checklist son la fuente oficial del expediente."));checklist.append(checkHeading);
+  for(const item of follow.items){
+    const row=el("article",`post-intake-item ${postIntakeStatusClass(item.status)}`),copyBlock=el("div","post-intake-item-copy");copyBlock.append(el("b",null,item.label),el("p",null,item.description||"Pendiente personalizado"));if(item.requestedAt)copyBlock.append(el("small",null,`Solicitado: ${formatTimestamp(item.requestedAt)}`));if(item.receivedAt)copyBlock.append(el("small",null,` · Recibido: ${formatTimestamp(item.receivedAt)}`));
+    const controls=el("div","post-intake-item-controls"),statusSelect=el("select");for(const [value,label] of Object.entries(POST_INTAKE_STATUS)){const option=el("option",null,label);option.value=value;option.selected=value===item.status;statusSelect.append(option)}
+    const documentSelect=el("select");documentSelect.append(el("option",null,"Sin documento asociado"));documentSelect.firstChild.value="";for(const doc of state.current.documents){const option=el("option",null,doc.name);option.value=doc.id;option.selected=doc.id===item.documentId;documentSelect.append(option)}
+    const notes=el("input");notes.placeholder="Nota interna";notes.value=item.notes||"";const save=el("button","secondary-button","Guardar");save.onclick=async()=>{save.disabled=true;try{await api(`${currentClientBase()}/${state.current.id}/post-intake/items/${item.id}`,{method:"PATCH",body:JSON.stringify({status:statusSelect.value,documentId:documentSelect.value||null,notes:notes.value})});await refreshCurrent();showTab("followup");toast("Pendiente actualizado")}catch(error){toast(error.message)}finally{save.disabled=false}};
+    const remove=el("button","post-intake-delete","Eliminar");remove.onclick=async()=>{if(!window.confirm(`¿Eliminar “${item.label}” del checklist?`))return;try{await api(`${currentClientBase()}/${state.current.id}/post-intake/items/${item.id}`,{method:"DELETE"});await refreshCurrent();showTab("followup");toast("Pendiente eliminado")}catch(error){toast(error.message)}};controls.append(statusSelect,documentSelect,notes,save,remove);row.append(copyBlock,controls);checklist.append(row);
+  }
+  const form=el("form","post-intake-add"),label=el("input");label.name="label";label.placeholder="Ej. Confirmar fecha de inicio de relación";label.required=true;const description=el("input");description.name="description";description.placeholder="Detalle de la aclaración (opcional)";const add=el("button","primary-button","Agregar aclaración");form.append(label,description,add);form.onsubmit=async(event)=>{event.preventDefault();add.disabled=true;try{await api(`${currentClientBase()}/${state.current.id}/post-intake/items`,{method:"POST",body:JSON.stringify({label:label.value,description:description.value})});await refreshCurrent();showTab("followup");toast("Aclaración agregada")}catch(error){toast(error.message)}finally{add.disabled=false}};checklist.append(form);root.append(checklist);
+}
 function timelineFieldLabel(fieldId){return state.current?.fields?.find(field=>field.id===fieldId)?.label||fieldId||"dato del expediente"}
 function timelinePresentation(item){
   const detail=item.detail||{},field=detail.fieldId?timelineFieldLabel(String(detail.fieldId)):null;
@@ -299,11 +353,22 @@ function timelinePresentation(item){
     CUSTOM_FIELD_DELETED:["Dato adicional eliminado","El administrador eliminó información libre.","admin"],
     CLIENT_MESSAGE_RECEIVED:["Mensaje recibido",`${shortText(detail.preview)||"Mensaje sin texto."}${detail.ignoredBecausePaused?" · No se respondió porque el bot estaba pausado.":detail.ignoredBecauseClosed?" · No se respondió porque el expediente estaba cerrado.":""}`,detail.ignoredBecauseClosed||detail.ignoredBecausePaused?"muted":"incoming"],
     BOT_MESSAGE_SENT:["Respuesta enviada",shortText(detail.preview)||"Respuesta automática sin texto.","outgoing"],
+    ADMIN_MESSAGE_SENT:["Mensaje manual del administrador",shortText(detail.preview)||"Mensaje manual sin texto.","admin"],
     BOT_MESSAGE_SEND_FAILED:["No se pudo enviar la respuesta",shortText(detail.error)||"WhatsApp rechazó el envío.","error"],
     CLIENT_MESSAGE_PROCESSING_FAILED:["Error al procesar mensaje",shortText(detail.error)||"No se pudo procesar el mensaje recibido.","error"],
     AI_INTERPRETATION_COMPLETED:["Respuesta interpretada con IA",`${field?`Campo: ${field}. `:""}Confianza: ${detail.confidence??"—"}%. La validación normal decidió qué guardar.`,"system"],
+    AI_DETAIL_CLARIFICATION_REQUESTED:["Detalle adicional solicitado",`${field?`Campo: ${field}. `:""}Se pidió una aclaración breve porque faltaba ${detail.reason==="MISSING_ORGANIZATION_NAME"?"el nombre de la empresa, negocio o institución":"el tipo de negocio o actividad"}.`,"system"],
+    AI_DETAIL_CLARIFICATION_LIMIT_REACHED:["Flujo continuado sin insistir",`${field?`Campo: ${field}. `:""}Ya se había pedido una aclaración; se guardó lo disponible para no detener ni hacer tediosa la conversación.`,"system"],
+    IMPLAUSIBLE_BIRTH_DATE_REJECTED:["Fecha de nacimiento rechazada",`${field?`Campo: ${field}. `:""}El año era imposible o estaba en el futuro; se solicitó corregirlo antes de continuar.`,"error"],
     AI_INTERPRETATION_FAILED:["La IA no pudo interpretar el mensaje",`${shortText(detail.error)||"OpenAI no respondió correctamente."} · Se utilizó el flujo normal como respaldo.`,"error"],
-    MEXICO_PROFILE_DEFAULTS_APPLIED:["Datos predeterminados aplicados",`Se completaron ${Array.isArray(detail.fields)?detail.fields.length:0} valores del perfil México.`,"system"]
+    MEXICO_PROFILE_DEFAULTS_APPLIED:["Datos predeterminados aplicados",`Se completaron ${Array.isArray(detail.fields)?detail.fields.length:0} valores del perfil México.`,"system"],
+    POST_INTAKE_STARTED:["Seguimiento final iniciado","El administrador confirmó que terminó la captura manual en los PDF externos.","admin"],
+    POST_INTAKE_ITEM_ADDED:["Aclaración agregada",shortText(detail.label)||"Se agregó un pendiente personalizado.","admin"],
+    POST_INTAKE_ITEM_UPDATED:["Pendiente actualizado",`${shortText(detail.label)||"Requisito"}: ${POST_INTAKE_STATUS[detail.status]||detail.status||"actualizado"}.`,"admin"],
+    POST_INTAKE_ITEM_DELETED:["Pendiente eliminado",shortText(detail.label)||"Se eliminó un requisito del checklist.","admin"],
+    POST_INTAKE_SUMMARY_GENERATED:["Resumen con IA actualizado",`Modelo: ${detail.model||"configurado"}. No se envió ningún mensaje al cliente.`,"system"],
+    POST_INTAKE_SUMMARY_FAILED:["No se pudo actualizar el resumen",shortText(detail.error)||"La IA no respondió correctamente.","error"],
+    POST_INTAKE_COMPLETED:["Seguimiento final completado","Todos los requisitos obligatorios quedaron aprobados.","admin"]
   };
   if(known[item.event])return known[item.event];
   const fallback=item.event.toLowerCase().replace(/_/g," ").replace(/^./,letter=>letter.toUpperCase());
@@ -312,7 +377,7 @@ function timelinePresentation(item){
 function renderActivity(){
   const events=Array.isArray(state.current.auditEvents)?state.current.auditEvents:[],root=$("#activityTimeline");root.replaceChildren();
   const latestIncoming=events.find(item=>item.event==="CLIENT_MESSAGE_RECEIVED")||events.find(item=>["ANSWER_CONFIRMED","ANSWER_SKIPPED"].includes(item.event));
-  const latestOutgoing=events.find(item=>item.event==="BOT_MESSAGE_SENT");
+  const latestOutgoing=events.find(item=>["BOT_MESSAGE_SENT","ADMIN_MESSAGE_SENT"].includes(item.event));
   $("#lastIncomingMessage").textContent=latestIncoming?.event==="CLIENT_MESSAGE_RECEIVED"?shortText(latestIncoming.detail?.preview,120):latestIncoming?`Respuesta registrada: ${timelineFieldLabel(latestIncoming.detail?.fieldId)}`:"Sin registro detallado";
   $("#lastIncomingAt").textContent=latestIncoming?formatTimestamp(latestIncoming.createdAt):"Los mensajes se detallarán desde esta actualización";
   $("#lastOutgoingMessage").textContent=latestOutgoing?shortText(latestOutgoing.detail?.preview,120):"Sin registro detallado";
@@ -328,7 +393,7 @@ function renderCustom(){
   const root=$("#customFields");root.replaceChildren();for(const item of state.current.customFields){const row=el("div","custom-item");row.append(el("b",null,item.label),el("span",null,item.value));const remove=el("button",null,"Eliminar");remove.onclick=async()=>{await api(`${currentClientBase()}/${state.current.id}/custom-fields/${item.id}`,{method:"DELETE"});await refreshCurrent()};row.append(remove);root.append(row)}
 }
 async function refreshCurrent(){await openClient(state.current.id,state.currentWorkflow);await (state.currentWorkflow==="usa"?loadUsaClients():loadClients())}
-function showTab(tab){document.querySelectorAll(".tabs button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));for(const name of ["information","activity","documents","extras"])$(`#${name}Tab`).hidden=name!==tab}
+function showTab(tab){document.querySelectorAll(".tabs button").forEach(b=>b.classList.toggle("active",b.dataset.tab===tab));for(const name of ["information","activity","documents","followup","extras"])$(`#${name}Tab`).hidden=name!==tab}
 
 for(const [value,label] of Object.entries(STATUS)){const option=el("option",null,label);option.value=value;$("#statusFilter").append(option)}
 document.querySelectorAll(".sort-button").forEach(button=>button.onclick=()=>{const key=button.dataset.sort;state.clientSort=state.clientSort.key===key?{key,direction:state.clientSort.direction==="asc"?"desc":"asc"}:{key,direction:"asc"};renderClients()});

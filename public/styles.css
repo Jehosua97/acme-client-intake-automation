@@ -200,6 +200,50 @@ td { border-top: 1px solid #edf0ee; padding: 16px 22px; font-size: 13px; }
 .document-card b { font-size: 12px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .document-card span { font-size: 10px; color: var(--muted); display: block; margin: 6px 0 14px; }
 .document-card a { color: var(--green); font-size: 11px; font-weight: 700; text-decoration: none; }
+.post-intake-safety { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; padding: 11px 14px; border: 1px solid #b9d8c9; border-radius: 10px; background: #edf8f2; color: var(--green); }
+.post-intake-safety b { font-size: 11px; white-space: nowrap; }
+.post-intake-safety span { font-size: 10px; color: #49695d; }
+.post-intake-empty { max-width: 650px; margin: 45px auto; padding: 32px; border: 1px dashed #afc5bb; border-radius: 16px; background: #f8faf8; text-align: center; }
+.post-intake-empty-icon { width: 42px; height: 42px; margin: 0 auto 14px; border-radius: 50%; display: grid; place-items: center; background: var(--green-2); color: var(--green); font-weight: 900; }
+.post-intake-empty h3 { margin-bottom: 8px; font-size: 17px; }
+.post-intake-empty p { color: var(--muted); font-size: 12px; line-height: 1.55; }
+.post-intake-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+.post-intake-heading h3, .post-intake-list-heading h3 { margin: 0; font-size: 15px; }
+.post-intake-heading p, .post-intake-list-heading p { margin: 3px 0 0; color: var(--muted); font-size: 10px; }
+.post-intake-overview { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 10px; }
+.post-intake-overview article { padding: 13px 15px; border: 1px solid var(--line); border-radius: 11px; background: #f8faf8; }
+.post-intake-overview span, .post-intake-overview b, .post-intake-overview small { display: block; }
+.post-intake-overview span { color: var(--muted); font-size: 9px; font-weight: 800; text-transform: uppercase; letter-spacing: .05em; }
+.post-intake-overview b { margin: 5px 0; font-size: 13px; }
+.post-intake-overview small { color: var(--muted); font-size: 9px; }
+.post-intake-actions { display: flex; justify-content: flex-end; gap: 8px; margin: 12px 0; }
+.message-draft { margin: 12px 0; padding: 14px; border: 1px solid #e3b769; border-radius: 11px; background: #fff9ee; }
+.message-draft b { display: block; margin-bottom: 8px; color: #8a5918; font-size: 11px; }
+.message-draft textarea { display: block; width: 100%; margin-bottom: 8px; padding: 11px; border: 1px solid #dac69f; border-radius: 8px; background: white; resize: vertical; }
+.ai-summary-card, .post-intake-checklist { margin-top: 12px; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; background: white; }
+.ai-summary-placeholder { margin: 0; padding: 20px; color: var(--muted); font-size: 11px; }
+.ai-summary-body { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 14px; }
+.ai-summary-main { grid-column: 1/-1; margin: 0; padding: 12px; border-radius: 9px; background: #f5f8f6; font-size: 12px; line-height: 1.5; }
+.summary-field { min-width: 0; padding: 10px; border: 1px solid #edf0ee; border-radius: 8px; }
+.summary-field > span, .summary-evidence > span { display: block; margin-bottom: 5px; color: var(--muted); font-size: 9px; font-weight: 800; text-transform: uppercase; }
+.summary-field b, .summary-field li { font-size: 10px; line-height: 1.45; }
+.summary-field ul { margin: 0; padding-left: 17px; }
+.summary-evidence { grid-column: 1/-1; padding: 10px; border-top: 1px solid var(--line); }
+.summary-evidence div { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 5px 0; }
+.summary-evidence b, .summary-evidence a, .summary-evidence small { font-size: 9px; }
+.summary-evidence a { color: var(--green); font-weight: 700; }
+.post-intake-list-heading { padding: 13px 14px; background: #edf5f1; border-left: 3px solid var(--green); }
+.post-intake-item { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(520px, 2fr); gap: 14px; padding: 12px 14px; border-top: 1px solid var(--line); }
+.post-intake-item.active { border-left: 3px solid #25a669; }
+.post-intake-item.review { border-left: 3px solid #e3a12f; background: #fffcf7; }
+.post-intake-item.muted { opacity: .7; }
+.post-intake-item-copy b { font-size: 11px; }
+.post-intake-item-copy p { margin: 4px 0; color: var(--muted); font-size: 9px; line-height: 1.4; }
+.post-intake-item-copy small { color: var(--muted); font-size: 8px; }
+.post-intake-item-controls { display: grid; grid-template-columns: 1fr 1.2fr 1.4fr auto auto; gap: 6px; align-items: center; }
+.post-intake-item-controls select, .post-intake-item-controls input, .post-intake-add input { min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: white; font-size: 9px; }
+.post-intake-delete { border: 0; background: transparent; color: var(--red); font-size: 9px; cursor: pointer; }
+.post-intake-add { display: grid; grid-template-columns: 1fr 1.5fr auto; gap: 8px; padding: 14px; border-top: 1px solid var(--line); background: #f8faf8; }
 .activity-summary { display: grid; grid-template-columns: 1fr 1fr 180px; gap: 10px; margin-bottom: 20px; }
 .activity-summary article { min-width: 0; padding: 13px 15px; border: 1px solid var(--line); border-radius: 11px; background: #f8faf8; }
 .activity-summary span, .activity-summary b, .activity-summary small { display: block; }
@@ -292,6 +336,12 @@ td { border-top: 1px solid #edf0ee; padding: 16px 22px; font-size: 13px; }
   .client-dialog { width: 100vw; height: 100vh; max-width: none; max-height: none; border-radius: 0; }
   .information-columns { column-count: 1; }
   .documents-grid { grid-template-columns: 1fr; }
+  .post-intake-overview, .ai-summary-body { grid-template-columns: 1fr; }
+  .ai-summary-main, .summary-evidence { grid-column: 1; }
+  .post-intake-actions { align-items: stretch; flex-direction: column; }
+  .post-intake-item { grid-template-columns: 1fr; }
+  .post-intake-item-controls { grid-template-columns: 1fr; }
+  .post-intake-add { grid-template-columns: 1fr; }
   .activity-summary { grid-template-columns: 1fr; }
   .detail-overview { grid-template-columns: 1fr 1fr; }
   .detail-progress { grid-column: 1/-1; }

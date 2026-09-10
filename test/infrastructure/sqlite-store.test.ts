@@ -53,4 +53,39 @@ describe("SQLiteStore", () => {
       await rm(directory, { recursive: true, force: true });
     }
   });
+
+  it("tracks post-PDF requirements without changing or contacting an active case", async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), "msc-post-intake-"));
+    const store = new SQLiteStore(path.join(directory, "bot.sqlite"));
+    try {
+      const caseRecord = store.createCase("5215551111111@c.us", "+5215551111111", "Cliente prueba");
+      caseRecord.status = "ACTIVE";
+      store.saveCase(caseRecord);
+
+      const followUp = store.startPostIntake(caseRecord.id);
+      assert.equal(followUp.started, true);
+      assert.equal(followUp.items.length, 4);
+      assert.equal(followUp.items.find((item) => item.kind === "PROPERTY_EVIDENCE")?.status, "NOT_REQUIRED");
+      assert.equal(store.getCaseById(caseRecord.id)?.status, "ACTIVE");
+
+      const clarification = store.addPostIntakeItem(caseRecord.id, "Confirmar fecha de relación", "Solicitar día, mes y año");
+      assert.equal(store.getPostIntake(caseRecord.id)?.stage, "CLARIFICATIONS");
+      store.updatePostIntakeItem(caseRecord.id, clarification.id, { status: "APPROVED", notes: "Confirmado por el cliente" });
+
+      const requirements = store.getPostIntake(caseRecord.id)!.items.filter((item) => item.required && item.id !== clarification.id);
+      for (const item of requirements) store.updatePostIntakeItem(caseRecord.id, item.id, { status: "APPROVED" });
+      const completed = store.completePostIntake(caseRecord.id);
+      assert.equal(completed.stage, "COMPLETE");
+      assert.equal(completed.progress.completed, completed.progress.total);
+      assert.equal(store.getCaseById(caseRecord.id)?.status, "ACTIVE");
+
+      const events = store.listAuditEvents(caseRecord.id);
+      assert.ok(events.some((event) => event.event === "POST_INTAKE_STARTED"));
+      assert.ok(events.some((event) => event.event === "POST_INTAKE_COMPLETED"));
+      assert.equal(events.some((event) => event.event === "BOT_MESSAGE_SENT"), false);
+    } finally {
+      store.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
 });

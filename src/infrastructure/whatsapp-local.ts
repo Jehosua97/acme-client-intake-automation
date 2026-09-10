@@ -183,6 +183,34 @@ function normalizedCommand(value: string): string {
   return value.trim().toLocaleLowerCase("es").normalize("NFD").replace(/[\u0300-\u036f]/g, "");
 }
 
+export type DetailClarificationReason = "MISSING_BUSINESS_TYPE" | "MISSING_ORGANIZATION_NAME";
+
+export function detailClarificationReason(field: Pick<FieldDefinition, "id">, value: string): DetailClarificationReason | null {
+  const normalized = normalizedCommand(value).replace(/[.,;:!?]+$/g, "").replace(/\s+/g, " ");
+  if (!normalized) return null;
+  const activityField = /^employment\.\d+\.activity$/.test(field.id)
+    || ["employment.position", "employment.duties"].includes(field.id);
+  if (activityField && /^(?:(?:tengo|es|soy) (?:un |una )?)?(?:negocio (?:propio|personal)|trabajo por mi cuenta|por mi cuenta|independiente|autoempleo|self employed|own business)$/.test(normalized)) {
+    return "MISSING_BUSINESS_TYPE";
+  }
+  const organizationField = /^employment\.\d+\.organization$/.test(field.id)
+    || ["employment.company", "education.school"].includes(field.id);
+  const explicitlyUnnamed = /^(?:sin nombre(?: comercial)?|no (?:tiene|tengo|hay|cuenta con) nombre(?: comercial)?|no aplica|n\/a)$/.test(normalized);
+  if (organizationField && !explicitlyUnnamed
+    && /^(?:(?:un|una|el|la|mi) )?(?:taller (?:de autos|mecanico(?: automotriz)?)|escuela|universidad|colegio|instituto|negocio (?:propio|personal)|por mi cuenta|self employed|own business)$/.test(normalized)) {
+    return "MISSING_ORGANIZATION_NAME";
+  }
+  return null;
+}
+
+function detailClarificationPrompt(field: Pick<FieldDefinition, "id">, reason: DetailClarificationReason): string {
+  if (reason === "MISSING_BUSINESS_TYPE") {
+    return "Gracias. Para completar este dato, ¿qué tipo de negocio, producto o servicio realizas? Por ejemplo: venta de alimentos, reparación automotriz, comercio o construcción.";
+  }
+  if (field.id === "education.school") return "¿Cuál es el nombre completo de la escuela o institución?";
+  return "¿Cuál es el nombre del taller, negocio, empresa o institución? Si no tiene nombre comercial, responde SIN NOMBRE.";
+}
+
 export function refersToPreviousAnswer(value: string): boolean {
   return /^(?:ya\s+(?:te\s+)?(?:lo|la)\s+(?:di|mande|envie)|ya\s+respondi|te\s+lo\s+acabo\s+de\s+dar|i\s+already\s+(?:gave|sent)\s+it)$/.test(normalizedCommand(value));
 }
@@ -229,6 +257,7 @@ export class WhatsAppLocalService {
   private workerTimer: NodeJS.Timeout | null = null;
   private workerBusy = false;
   private backupInProgress = false;
+  private readonly automatedOutgoing = new Map<string, number[]>();
 
   constructor(
     private readonly config: Config,
@@ -331,7 +360,11 @@ export class WhatsAppLocalService {
     const messageId = normalizeWhatsAppMessageId(message.id);
     try {
       const parsedCommand = parseAdminBotCommand(message.body);
-      if (!parsedCommand || message.isStatus) return;
+      if (message.isStatus) return;
+      if (!parsedCommand) {
+        await this.recordManualOwnerMessage(message, messageId);
+        return;
+      }
       if (this.runtime.automationPaused && parsedCommand !== "STOP_ALL") {
         this.store.audit(null, "ADMIN_COMMAND_IGNORED_WHILE_AUTOMATION_PAUSED", { command: parsedCommand });
         return;
@@ -375,6 +408,38 @@ export class WhatsAppLocalService {
       });
       this.setError(error, false);
     }
+  }
+
+  private async recordManualOwnerMessage(message: Message, messageId: string | null): Promise<void> {
+    const rawMessageId = message.id as unknown;
+    const remoteFromId = rawMessageId && typeof rawMessageId === "object"
+      ? serializedText((rawMessageId as Record<string, unknown>).remote)
+      : null;
+    const chatId = serializedText(message.to) ?? remoteFromId;
+    if (!chatId || chatId.endsWith("@g.us") || chatId.endsWith("@broadcast") || chatId.endsWith("@newsletter")) return;
+    if (this.consumeAutomatedOutgoing(chatId, message.body)) return;
+    const identity = await this.resolveChatIdentity(chatId, [remoteFromId, serializedText(message.to)]);
+    const canadaCase = this.caseForIdentity(chatId, identity, "CANADA");
+    const usaCase = this.caseForIdentity(chatId, identity, "USA");
+    const candidates = [
+      canadaCase ? { workflow: "CANADA" as const, caseRecord: canadaCase, store: this.store } : null,
+      usaCase ? { workflow: "USA" as const, caseRecord: usaCase, store: this.usaStore } : null,
+    ].filter((value): value is NonNullable<typeof value> => Boolean(value));
+    if (!candidates.length) return;
+    const openStatuses = new Set(["ACTIVE", "PAUSED", "WAITING_FOR_CLIENT"]);
+    candidates.sort((left, right) => {
+      const openDifference = Number(openStatuses.has(right.caseRecord.status)) - Number(openStatuses.has(left.caseRecord.status));
+      return openDifference || Date.parse(right.caseRecord.updatedAt) - Date.parse(left.caseRecord.updatedAt);
+    });
+    const target = candidates[0]!;
+    if (messageId && target.store.isProcessed(messageId)) return;
+    target.store.audit(target.caseRecord.id, "ADMIN_MESSAGE_SENT", {
+      messageId,
+      messageType: String(message.type ?? "unknown"),
+      preview: timelineMessagePreview(message.body, String(message.type ?? "unknown")),
+      workflow: target.workflow,
+    });
+    if (messageId) target.store.markProcessed(messageId);
   }
 
   private storeFor(workflow: WorkflowKind): SQLiteStore { return workflow === "USA" ? this.usaStore : this.store; }
@@ -598,13 +663,19 @@ export class WhatsAppLocalService {
       && (item.detail as Record<string, unknown> | undefined)?.messageId === currentMessageId);
     if (currentIndex < 0) return null;
     const clarificationIndex = events.findIndex((item, index) => index > currentIndex
-      && item.event === "AI_INTERPRETATION_COMPLETED"
+      && ["AI_INTERPRETATION_COMPLETED", "AI_DETAIL_CLARIFICATION_REQUESTED"].includes(String(item.event))
       && (item.detail as Record<string, unknown> | undefined)?.fieldId === fieldId
-      && (item.detail as Record<string, unknown> | undefined)?.action === "CLARIFY");
+      && (item.event === "AI_DETAIL_CLARIFICATION_REQUESTED"
+        || (item.detail as Record<string, unknown> | undefined)?.action === "CLARIFY"));
     if (clarificationIndex < 0) return null;
     const previous = events.find((item, index) => index > clarificationIndex && item.event === "CLIENT_MESSAGE_RECEIVED");
     const preview = (previous?.detail as Record<string, unknown> | undefined)?.preview;
     return typeof preview === "string" && preview.trim() && !refersToPreviousAnswer(preview) ? preview.trim() : null;
+  }
+
+  private alreadyRequestedDetail(workflow: WorkflowKind, clientId: string, fieldId: string): boolean {
+    return this.storeFor(workflow).listAuditEvents(clientId, 300).some((item) => item.event === "AI_DETAIL_CLARIFICATION_REQUESTED"
+      && (item.detail as Record<string, unknown>)?.fieldId === fieldId);
   }
 
   private async handleConversationText(workflow: WorkflowKind, caseRecord: CaseRecord, raw: string, messageId: string): Promise<ReturnType<typeof handleClientText>> {
@@ -624,6 +695,31 @@ export class WhatsAppLocalService {
       ? this.previousAnswerAfterAiClarification(workflow, caseRecord.id, messageId, field.id)
       : null;
     const effectiveRaw = recoveredAnswer ?? raw;
+    const localDetailReason = detailClarificationReason(field, effectiveRaw);
+    const detailAlreadyRequested = this.alreadyRequestedDetail(workflow, caseRecord.id, field.id);
+
+    if (localDetailReason && !detailAlreadyRequested) {
+      return {
+        caseRecord,
+        outgoing: [{ type: "text", body: detailClarificationPrompt(field, localDetailReason) }],
+        auditEvents: [{
+          event: "AI_DETAIL_CLARIFICATION_REQUESTED",
+          detail: { workflow, fieldId: field.id, reason: localDetailReason, source: "LOCAL_SAFEGUARD" },
+        }],
+      };
+    }
+
+    if (localDetailReason && detailAlreadyRequested) {
+      const result = deterministic(effectiveRaw);
+      result.auditEvents.unshift({
+        event: "AI_DETAIL_CLARIFICATION_LIMIT_REACHED",
+        detail: { workflow, fieldId: field.id, reason: localDetailReason },
+      });
+      if (result.caseRecord.status === "ACTIVE" && result.outgoing[0]?.type === "text") {
+        result.outgoing[0] = { type: "text", body: `De acuerdo, guardaré lo que me indicaste.\n\n${result.outgoing[0].body}` };
+      }
+      return result;
+    }
 
     if (DETERMINISTIC_FIRST_KINDS.has(field.kind)) {
       const result = deterministic(effectiveRaw);
@@ -638,6 +734,16 @@ export class WhatsAppLocalService {
         }
         return result;
       }
+      const implausibleBirthDate = field.id.endsWith(".birth_date")
+        && result.outgoing[0]?.type === "text"
+        && /año de nacimiento parece incorrecto/i.test(result.outgoing[0].body);
+      if (implausibleBirthDate) {
+        result.auditEvents.unshift({
+          event: "IMPLAUSIBLE_BIRTH_DATE_REJECTED",
+          detail: { workflow, fieldId: field.id },
+        });
+        return result;
+      }
     }
 
     try {
@@ -650,11 +756,44 @@ export class WhatsAppLocalService {
           workflow,
           fieldId: field.id,
           action: addressSafeguard && interpretation.action === "CLARIFY" ? "ANSWER_ADDRESS_SAFEGUARD" : interpretation.action,
+          clarificationReason: interpretation.clarificationReason,
           confidence: interpretation.confidence,
           model: aiStatus.model,
           recoveredPreviousAnswer: Boolean(recoveredAnswer),
         },
       };
+      const aiDetailReason = interpretation.action === "CLARIFY"
+        && ["MISSING_BUSINESS_TYPE", "MISSING_ORGANIZATION_NAME"].includes(interpretation.clarificationReason)
+        ? interpretation.clarificationReason as DetailClarificationReason
+        : null;
+      if (!addressSafeguard && aiDetailReason && !detailAlreadyRequested) {
+        return {
+          caseRecord,
+          outgoing: [{ type: "text", body: detailClarificationPrompt(field, aiDetailReason) }],
+          auditEvents: [aiAudit, {
+            event: "AI_DETAIL_CLARIFICATION_REQUESTED",
+            detail: { workflow, fieldId: field.id, reason: aiDetailReason, source: "AI" },
+          }],
+        };
+      }
+      if (!addressSafeguard && aiDetailReason && detailAlreadyRequested) {
+        const result = deterministic(effectiveRaw);
+        result.auditEvents.unshift(aiAudit, {
+          event: "AI_DETAIL_CLARIFICATION_LIMIT_REACHED",
+          detail: { workflow, fieldId: field.id, reason: aiDetailReason },
+        });
+        if (result.caseRecord.status === "ACTIVE" && result.outgoing[0]?.type === "text") {
+          result.outgoing[0] = { type: "text", body: `De acuerdo, guardaré lo que me indicaste.\n\n${result.outgoing[0].body}` };
+        }
+        return result;
+      }
+      if (!addressSafeguard && interpretation.action === "CLARIFY" && interpretation.clarificationReason === "IMPLAUSIBLE_DATE") {
+        return {
+          caseRecord,
+          outgoing: [{ type: "text", body: "Ese año de nacimiento parece incorrecto. Revísalo y envía la fecha nuevamente en formato DD/MM/AAAA." }],
+          auditEvents: [aiAudit],
+        };
+      }
       if (!addressSafeguard && (interpretation.action !== "ANSWER" || interpretation.confidence < 75 || !interpretation.normalizedAnswer.trim())) {
         return {
           caseRecord,
@@ -749,12 +888,41 @@ export class WhatsAppLocalService {
   private async sendTrackedText(chatId: string, body: string, store: SQLiteStore, clientId: string): Promise<void> {
     const preview = timelineMessagePreview(body, "text");
     try {
+      this.markAutomatedOutgoing(chatId, body);
       const sent = await this.client.sendMessage(chatId, body);
-      store.audit(clientId, "BOT_MESSAGE_SENT", { messageId: normalizeWhatsAppMessageId(sent?.id), preview });
+      const messageId = normalizeWhatsAppMessageId(sent?.id);
+      if (messageId) store.markProcessed(messageId);
+      store.audit(clientId, "BOT_MESSAGE_SENT", { messageId, preview });
     } catch (error) {
       store.audit(clientId, "BOT_MESSAGE_SEND_FAILED", { preview, error: error instanceof Error ? error.message : String(error) });
       throw error;
     }
+  }
+
+  private outgoingFingerprint(chatId: string, body: string): string {
+    return `${chatId}\n${body}`;
+  }
+
+  private markAutomatedOutgoing(chatId: string, body: string): void {
+    const key = this.outgoingFingerprint(chatId, body);
+    const now = Date.now();
+    const expirations = (this.automatedOutgoing.get(key) ?? []).filter((expiry) => expiry > now);
+    expirations.push(now + 20_000);
+    this.automatedOutgoing.set(key, expirations);
+  }
+
+  private consumeAutomatedOutgoing(chatId: string, body: string): boolean {
+    const key = this.outgoingFingerprint(chatId, body);
+    const now = Date.now();
+    const expirations = (this.automatedOutgoing.get(key) ?? []).filter((expiry) => expiry > now);
+    if (!expirations.length) {
+      this.automatedOutgoing.delete(key);
+      return false;
+    }
+    expirations.shift();
+    if (expirations.length) this.automatedOutgoing.set(key, expirations);
+    else this.automatedOutgoing.delete(key);
+    return true;
   }
 
   private async startFullBackup(chatId: string, messageId: string): Promise<void> {

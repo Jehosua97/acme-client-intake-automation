@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { crossFieldIssues, derivedEmploymentUntil, employmentCoverageIssues, immediateConsistencyIssue } from "../../src/domain/consistency.js";
+import { usaImmediateConsistencyIssue } from "../../src/domain/usa-consistency.js";
 import type { Answer } from "../../src/domain/types.js";
 
 const answer = (fieldId: string, value: string | number): Answer => ({ fieldId, value, status: "CONFIRMED", source: "CHAT", updatedAt: new Date().toISOString() });
@@ -55,6 +56,15 @@ describe("cross-field consistency", () => {
     assert.match(immediateConsistencyIssue("application.previous_canada_exit_date", "2024-06-15", answers, referenceDate) ?? "", /posterior/);
     assert.equal(immediateConsistencyIssue("application.previous_canada_exit_date", "2024-06-16", answers, referenceDate), null);
     assert.match(immediateConsistencyIssue("application.previous_canada_exit_date", "2027-01-01", answers, referenceDate) ?? "", /futuro/);
+  });
+
+  it("rejects implausible birth years but accepts plausible dates", () => {
+    const referenceDate = new Date("2026-09-09T12:00:00Z");
+    assert.match(immediateConsistencyIssue("mother.birth_date", "1810-01-01", {}, referenceDate) ?? "", /año de nacimiento/i);
+    assert.match(immediateConsistencyIssue("father.birth_date", "2027-01-01", {}, referenceDate) ?? "", /año de nacimiento/i);
+    assert.equal(immediateConsistencyIssue("mother.birth_date", "1950-01-01", {}, referenceDate), null);
+    assert.match(usaImmediateConsistencyIssue("mother.birth_date", "1810-01-01", {}, referenceDate) ?? "", /año de nacimiento/i);
+    assert.equal(usaImmediateConsistencyIssue("father.birth_date", "1950-01-01", {}, referenceDate), null);
   });
 
   it("detects impossible passport and visit chronology", () => {

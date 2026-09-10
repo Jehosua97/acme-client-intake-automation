@@ -38,6 +38,13 @@ export function immediateConsistencyIssue(
   referenceDate = new Date(),
 ): string | null {
   if (typeof value !== "string") return null;
+  if (fieldId.endsWith(".birth_date")) {
+    const currentYear = referenceDate.getUTCFullYear();
+    const year = Number(value.slice(0, 4));
+    if (value > referenceDate.toISOString().slice(0, 10) || year < currentYear - 120) {
+      return "Ese año de nacimiento parece incorrecto. Revísalo y envía la fecha nuevamente en formato DD/MM/AAAA.";
+    }
+  }
   if (fieldId === "visit.from") {
     const until = textValue(answers, "visit.until");
     if (until && value >= until) return "La fecha de llegada debe ser anterior a la fecha estimada de salida de Canadá.";

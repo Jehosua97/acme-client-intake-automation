@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { isAuthorizedBackupPhone, isAuthorizedCommandPhone, looksLikeUsableAddress, normalizeWhatsAppMessageId, parseAdminBotCommand, parseAuthorizedSelfServiceCommand, refersToPreviousAnswer, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
+import { detailClarificationReason, isAuthorizedBackupPhone, isAuthorizedCommandPhone, looksLikeUsableAddress, normalizeWhatsAppMessageId, parseAdminBotCommand, parseAuthorizedSelfServiceCommand, refersToPreviousAnswer, repairWhatsAppMessageId } from "../../src/infrastructure/whatsapp-local.js";
 
 describe("WhatsApp message ID normalization", () => {
   it("accepts the serialized ID provided by normal WhatsApp messages", () => {
@@ -73,5 +73,19 @@ describe("AI answer safeguards", () => {
     assert.equal(refersToPreviousAnswer("Ya te lo di"), true);
     assert.equal(refersToPreviousAnswer("I already sent it"), true);
     assert.equal(refersToPreviousAnswer("Esta es otra dirección"), false);
+  });
+
+  it("requests business detail only for genuinely generic activity answers", () => {
+    assert.equal(detailClarificationReason({ id: "employment.1.activity" }, "Negocio propio"), "MISSING_BUSINESS_TYPE");
+    assert.equal(detailClarificationReason({ id: "employment.position" }, "Trabajo por mi cuenta"), "MISSING_BUSINESS_TYPE");
+    assert.equal(detailClarificationReason({ id: "employment.1.activity" }, "Negocio propio de venta de alimentos"), null);
+    assert.equal(detailClarificationReason({ id: "employment.duties" }, "Reparación automotriz"), null);
+  });
+
+  it("asks for an organization name but accepts an explicit unnamed business", () => {
+    assert.equal(detailClarificationReason({ id: "employment.1.organization" }, "Taller de autos"), "MISSING_ORGANIZATION_NAME");
+    assert.equal(detailClarificationReason({ id: "education.school" }, "Escuela"), "MISSING_ORGANIZATION_NAME");
+    assert.equal(detailClarificationReason({ id: "employment.company" }, "Taller Mecánico López"), null);
+    assert.equal(detailClarificationReason({ id: "employment.company" }, "Sin nombre comercial"), null);
   });
 });

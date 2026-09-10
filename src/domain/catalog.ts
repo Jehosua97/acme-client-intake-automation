@@ -173,11 +173,11 @@ function repeatedEmployment(answers: Answers): FieldDefinition[] {
     const newerOrganization = String(answers[`employment.${index - 1}.organization`]?.value ?? "");
     const newerContext = newerOrganization ? `${newerActivity} en ${newerOrganization}` : newerActivity;
     const activityPrompt = index === 1
-      ? `💼 *Actividades de los últimos 10 años*\n\nPara la solicitud de visa necesitamos cubrir tus trabajos, estudios u otras actividades desde *${cutoff.display}* hasta hoy, sin dejar meses vacíos. Iremos desde tu actividad actual hacia atrás y yo organizaré las fechas.\n\nPara comenzar, ¿cuál es tu trabajo o actividad actual? También puedes indicar estudiante, negocio propio, cuidado del hogar, desempleo u otra actividad.`
-      : `Antes de *${newerContext}*, ¿qué trabajo, estudio u otra actividad realizabas?`;
+      ? `💼 *Actividades de los últimos 10 años*\n\nPara la solicitud de visa necesitamos cubrir tus trabajos, estudios u otras actividades desde *${cutoff.display}* hasta hoy, sin dejar meses vacíos. Iremos desde tu actividad actual hacia atrás y yo organizaré las fechas.\n\nPara comenzar, ¿cuál es tu trabajo o actividad actual? Si trabajas por tu cuenta, indica brevemente qué producto vendes o qué servicio realizas.`
+      : `Antes de *${newerContext}*, ¿qué trabajo, estudio u otra actividad realizabas? Si era por tu cuenta, indica brevemente qué producto vendías o qué servicio realizabas.`;
     const organizationPrompt = index === 1
-      ? "¿Cuál es el nombre de la empresa, escuela, negocio o institución donde realizas esa actividad? Si trabajas por tu cuenta, indícalo."
-      : "¿En qué empresa, escuela, negocio o institución realizabas esa actividad? Si era por cuenta propia, desempleo o cuidado del hogar, indícalo.";
+      ? "¿Cuál es el nombre completo de la empresa, escuela, negocio o institución donde realizas esa actividad? Si tu negocio no tiene nombre comercial, responde SIN NOMBRE."
+      : "¿Cuál era el nombre completo de la empresa, escuela, negocio o institución donde realizabas esa actividad? Si no tenía nombre comercial, responde SIN NOMBRE.";
     const fromPrompt = index === 1
       ? "¿En qué mes y año comenzaste tu actividad actual? Usa MM/AAAA."
       : `¿En qué mes y año comenzaste esa actividad? Usa MM/AAAA. Seguiremos hacia atrás hasta cubrir ${cutoff.display}.`;
